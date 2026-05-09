@@ -122,13 +122,13 @@ The `security.yml` workflow runs `rustsec/audit-check` daily at 00:00 UTC and on
 
 ## First-time setup
 
-Three GitHub repository secrets must be configured before the first release will fully succeed (Settings → Secrets and variables → Actions):
+Five GitHub repository secrets must be configured before the first release will fully succeed (Settings → Secrets and variables → Actions):
 
 | Secret | Purpose |
 |---|---|
-| `RELEASE_PLEASE_TOKEN` | Fine-grained PAT scoped to this repo with `contents: write` + `pull-requests: write`. Required so release-please's release PR triggers downstream workflows on merge — the default `GITHUB_TOKEN` cannot. |
+| `RELEASE_PLEASE_TOKEN` | Fine-grained PAT scoped to this repo with `Contents: Read and write` + `Pull requests: Read and write` + `Issues: Read and write`. Required so release-please's release PR triggers downstream workflows on merge — the default `GITHUB_TOKEN` cannot. |
 | `CARGO_REGISTRY_TOKEN` | crates.io API token for publishing both crates. Generate at <https://crates.io/settings/tokens>. |
-| `HOMEBREW_TAP_DEPLOY_KEY` | SSH deploy key registered on the [`maikbasel/homebrew-tap`](https://github.com/maikbasel/homebrew-tap) repo. Shared with `changelog-x`'s release pipeline. |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to [`maikbasel/homebrew-tap`](https://github.com/maikbasel/homebrew-tap) with `Contents: Read and write`. Used by `actions/checkout` in `release.yml` to push the regenerated formula. Shared with `changelog-x`'s release pipeline (same token can be reused). |
 | `GPG_PRIVATE_KEY` | ASCII-armored private key block (`gpg --armor --export-secret-keys <key-id>`). Used by `sign.yml` to attach detached signatures to each release. |
 | `GPG_PASSPHRASE` | Passphrase for the GPG key. Omit if the key has no passphrase. |
 
