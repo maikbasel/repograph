@@ -1,0 +1,76 @@
+name: Sign Release
+
+# Runs after the cargo-dist "Release" workflow completes successfully on a tag push.
+# Downloads every binary asset attached to the GitHub Release, signs each one with
+# the maintainer's GPG key, and uploads the detached `.asc` signatures back to the
+# same release. The Homebrew formula and shell installers ride on cargo-dist's
+# sha256 checksums; this workflow adds GPG provenance for users who want it.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    name: Sign release artifacts
+    # Only run when the upstream Release workflow succeeded on a tag push (not on PRs).
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p signing
+          cd signing
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.tar.xz' \
+            --pattern '*.tar.gz' \
+            --pattern '*.zip' \
+            --pattern '*-installer.sh' \
+            --pattern '*-installer.ps1'
+          ls -la
+
+      - name: Sign artifacts
+        working-directory: signing
+        run: |
+          set -euo pipefail
+          for f in *; do
+            case "$f" in
+              *.asc|*.sig) continue ;;
+            esac
+            gpg --batch --yes --detach-sign --armor "$f"
+          done
+          ls -la ./*.asc
+
+      - name: Upload signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: signing
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" ./*.asc \
+            --repo "${{ github.repository }}" \
+            --clobber

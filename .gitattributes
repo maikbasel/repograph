@@ -1,0 +1,18 @@
+# Normalize line endings so Windows builds match Linux/macOS.
+* text=auto eol=lf
+
+# Treat known binary formats as binary regardless of content sniff.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tgz   binary
+*.xz    binary
+*.tar   binary
+
+# Cargo.lock is tracked; treat it as text but never auto-merge.
+Cargo.lock merge=ours linguist-generated=true
