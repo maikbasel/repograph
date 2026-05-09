@@ -57,10 +57,7 @@ impl RepographError {
             Self::PermissionDenied { .. } => 4,
             Self::GitOpen { .. } | Self::NotFound { .. } => 3,
             Self::Conflict { .. } => 5,
-            Self::Io(_)
-            | Self::ConfigParse(_)
-            | Self::ConfigWrite(_)
-            | Self::UsageError(_) => 1,
+            Self::Io(_) | Self::ConfigParse(_) | Self::ConfigWrite(_) | Self::UsageError(_) => 1,
         }
     }
 }

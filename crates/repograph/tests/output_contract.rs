@@ -74,8 +74,11 @@ fn malformed_toml_exits_with_code_1() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
     std::fs::create_dir_all(&config_dir).unwrap();
-    std::fs::write(config_dir.join("config.toml"), "this is = = not valid toml [[[")
-        .unwrap();
+    std::fs::write(
+        config_dir.join("config.toml"),
+        "this is = = not valid toml [[[",
+    )
+    .unwrap();
 
     repograph_cmd(&config_dir)
         .arg("list")

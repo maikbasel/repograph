@@ -97,14 +97,9 @@ impl Config {
     /// registered under a different name.
     pub fn add_repo(&mut self, name: String, repo: Repo) -> Result<(), RepographError> {
         if self.repos.contains_key(&name) {
-            return Err(RepographError::Conflict {
-                kind: "name",
-                name,
-            });
+            return Err(RepographError::Conflict { kind: "name", name });
         }
-        if let Some((existing_name, _)) =
-            self.repos.iter().find(|(_, r)| r.path == repo.path)
-        {
+        if let Some((existing_name, _)) = self.repos.iter().find(|(_, r)| r.path == repo.path) {
             return Err(RepographError::Conflict {
                 kind: "path",
                 name: existing_name.clone(),
@@ -180,7 +175,10 @@ mod tests {
         cfg.save(tmp.path()).unwrap();
         let loaded = Config::load(tmp.path()).unwrap();
         assert_eq!(loaded.repos.len(), 2);
-        assert_eq!(loaded.repos.get("bar").unwrap().description.as_deref(), Some("hi"));
+        assert_eq!(
+            loaded.repos.get("bar").unwrap().description.as_deref(),
+            Some("hi")
+        );
     }
 
     #[test]
@@ -188,10 +186,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.add_repo("foo".into(), make("/a")).unwrap();
         let err = cfg.add_repo("foo".into(), make("/b")).unwrap_err();
-        assert!(matches!(
-            err,
-            RepographError::Conflict { kind: "name", .. }
-        ));
+        assert!(matches!(err, RepographError::Conflict { kind: "name", .. }));
         assert_eq!(cfg.repos.get("foo").unwrap().path, PathBuf::from("/a"));
     }
 
@@ -200,10 +195,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.add_repo("foo".into(), make("/shared")).unwrap();
         let err = cfg.add_repo("bar".into(), make("/shared")).unwrap_err();
-        assert!(matches!(
-            err,
-            RepographError::Conflict { kind: "path", .. }
-        ));
+        assert!(matches!(err, RepographError::Conflict { kind: "path", .. }));
         assert!(!cfg.repos.contains_key("bar"));
     }
 

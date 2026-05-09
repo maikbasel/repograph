@@ -69,8 +69,7 @@ pub fn fixture_git_repo(parent: &Path, name: &str) -> PathBuf {
 
 /// Parse JSON output from `repograph list --json` and return the `repos` array.
 pub fn parse_repos_json(stdout: &[u8]) -> Vec<serde_json::Value> {
-    let parsed: serde_json::Value =
-        serde_json::from_slice(stdout).expect("stdout is valid JSON");
+    let parsed: serde_json::Value = serde_json::from_slice(stdout).expect("stdout is valid JSON");
     parsed
         .get("repos")
         .and_then(serde_json::Value::as_array)

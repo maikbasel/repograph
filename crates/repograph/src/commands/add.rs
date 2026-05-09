@@ -61,8 +61,10 @@ fn derive_name(path: &Path) -> Result<String, RepographError> {
     path.file_name()
         .and_then(|s| s.to_str())
         .map(ToString::to_string)
-        .ok_or_else(|| RepographError::UsageError(format!(
-            "could not derive a name from path '{}'; pass --name",
-            path.display()
-        )))
+        .ok_or_else(|| {
+            RepographError::UsageError(format!(
+                "could not derive a name from path '{}'; pass --name",
+                path.display()
+            ))
+        })
 }

@@ -15,12 +15,7 @@ use tracing_subscriber::EnvFilter;
 struct Cli {
     /// Override the config directory. Resolution precedence:
     /// `--config-dir` > `REPOGRAPH_CONFIG_DIR` > platform default.
-    #[arg(
-        long,
-        global = true,
-        env = "REPOGRAPH_CONFIG_DIR",
-        value_name = "PATH"
-    )]
+    #[arg(long, global = true, env = "REPOGRAPH_CONFIG_DIR", value_name = "PATH")]
     config_dir: Option<PathBuf>,
 
     #[command(subcommand)]

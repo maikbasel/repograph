@@ -103,15 +103,8 @@ fn list_orders_repos_alphabetically_by_name() {
             .assert()
             .success();
         let repos = parse_repos_json(&out.get_output().stdout);
-        let names: Vec<&str> = repos
-            .iter()
-            .map(|v| v["name"].as_str().unwrap())
-            .collect();
-        assert_eq!(
-            names,
-            vec!["alpha", "mid", "zeta"],
-            "alphabetical ordering"
-        );
+        let names: Vec<&str> = repos.iter().map(|v| v["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["alpha", "mid", "zeta"], "alphabetical ordering");
     }
 }
 

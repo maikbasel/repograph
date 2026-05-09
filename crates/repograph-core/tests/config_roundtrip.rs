@@ -120,7 +120,10 @@ fn name_conflict_returns_error_no_mutation() {
 
     assert_eq!(err.exit_code(), 5, "conflict maps to exit 5");
     // First entry untouched.
-    assert_eq!(cfg.repos().get("foo").unwrap().path, PathBuf::from("/tmp/a"));
+    assert_eq!(
+        cfg.repos().get("foo").unwrap().path,
+        PathBuf::from("/tmp/a")
+    );
 }
 
 #[test]
