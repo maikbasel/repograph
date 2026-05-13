@@ -8,7 +8,10 @@ pub mod config;
 pub mod error;
 pub mod git;
 
-pub use config::{CONFIG_FILE_NAME, Config, Repo};
+pub use config::{
+    CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo, Workspace,
+    WorkspaceResolution, validate_workspace_name,
+};
 pub use error::RepographError;
 pub use git::validate_git_repo;
 

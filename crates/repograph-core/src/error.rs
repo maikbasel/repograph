@@ -45,6 +45,16 @@ pub enum RepographError {
     /// errors are handled by clap and exit with code 2 directly.
     #[error("{0}")]
     UsageError(String),
+
+    /// User-supplied identifier violates a naming rule (e.g. workspace name
+    /// fails the RFC 1123 label policy). Maps to exit code `2`, matching how
+    /// clap reports bad arguments.
+    #[error("invalid {kind} name '{name}': {reason}")]
+    InvalidName {
+        kind: &'static str,
+        name: String,
+        reason: &'static str,
+    },
 }
 
 impl RepographError {
@@ -57,6 +67,7 @@ impl RepographError {
             Self::PermissionDenied { .. } => 4,
             Self::GitOpen { .. } | Self::NotFound { .. } => 3,
             Self::Conflict { .. } => 5,
+            Self::InvalidName { .. } => 2,
             Self::Io(_) | Self::ConfigParse(_) | Self::ConfigWrite(_) | Self::UsageError(_) => 1,
         }
     }
@@ -118,6 +129,16 @@ mod tests {
     fn usage_error_maps_to_1() {
         let err = RepographError::UsageError("nope".into());
         assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn invalid_name_maps_to_2() {
+        let err = RepographError::InvalidName {
+            kind: "workspace",
+            name: "Bad Name".into(),
+            reason: "must be lowercase",
+        };
+        assert_eq!(err.exit_code(), 2);
     }
 
     #[test]

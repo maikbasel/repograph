@@ -81,3 +81,19 @@ pub fn parse_repos_json(stdout: &[u8]) -> Vec<serde_json::Value> {
 pub fn parse_list_json(stdout: &[u8]) -> serde_json::Value {
     serde_json::from_slice(stdout).expect("stdout is valid JSON")
 }
+
+/// Parse JSON output from `repograph workspace ls --json` and return the
+/// `workspaces` array.
+pub fn parse_workspaces_json(stdout: &[u8]) -> Vec<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_slice(stdout).expect("stdout is valid JSON");
+    parsed
+        .get("workspaces")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("envelope contains a `workspaces` array")
+}
+
+/// Parse the full JSON envelope from `repograph workspace show --json`.
+pub fn parse_workspace_show_json(stdout: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(stdout).expect("stdout is valid JSON")
+}

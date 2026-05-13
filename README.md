@@ -11,8 +11,14 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | Command | Purpose |
 |---------|---------|
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
-| `repograph list [--json]` | List the registered repositories. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
-| `repograph remove <name>` | Remove a registered repository by name. |
+| `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
+| `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
+| `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
+| `repograph workspace rm <name>` | Delete a workspace. Registered repos are not touched. |
+| `repograph workspace ls [--json]` | List the registered workspaces with name, description, and member count. |
+| `repograph workspace show <name> [--json]` | Show one workspace's resolved live members and dangling references. |
+| `repograph workspace add <workspace> <repo>…` | Attach one or more registered repos to a workspace. Idempotent on duplicates; atomic on missing repos. |
+| `repograph workspace remove <workspace> <repo>…` | Detach repos from a workspace. Does not deregister the repos themselves. |
 
 `add` accepts `--name`, `--description`, and `--stack <a,b,c>` (comma-separated tags). When `--name` is omitted, the path's basename is used.
 
@@ -31,17 +37,51 @@ stack = ["rust"]
 [repo.repograph]
 path = "/home/maik/IdeaProjects/repograph"
 stack = ["rust"]
+
+[workspace.acme]
+description = "Acme rebuild"
+members = [
+    "changelog-x",
+    "repograph",
+]
 ```
 
-### JSON output shape
+### JSON output shapes
 
-`repograph list --json` emits a resource-keyed envelope:
+`repograph list --json` emits a `repos`-keyed envelope:
 
 ```json
 { "repos": [ { "name": "...", "path": "...", "description": "...", "stack": [...] } ] }
 ```
 
 Empty registry: `{ "repos": [] }`.
+
+`repograph workspace ls --json` emits a `workspaces`-keyed envelope:
+
+```json
+{ "workspaces": [ { "name": "acme", "description": "Acme rebuild", "members": ["api", "ui"] } ] }
+```
+
+`repograph workspace show <name> --json` emits a single workspace with members resolved against the registry and a `dangling` array of names whose repos have been deregistered:
+
+```json
+{
+  "name": "acme",
+  "description": "Acme rebuild",
+  "members": [ { "name": "ui", "path": "/home/maik/IdeaProjects/ui", "description": null, "stack": [] } ],
+  "dangling": ["api"]
+}
+```
+
+`dangling` is always present (even when empty), making drift trivially detectable by agent consumers. A dangling member also produces a `WARN` line on stderr.
+
+### Filtering by workspace
+
+```bash
+repograph list --workspace acme --json
+```
+
+Restricts the registry listing to live members of `acme`. Dangling members are silently skipped (see `workspace show` for the audit view). A non-existent workspace name exits `3`.
 
 ## Exit codes
 
