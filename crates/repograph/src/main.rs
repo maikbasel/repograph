@@ -30,6 +30,8 @@ enum Command {
     List(commands::list::Args),
     /// Remove a registered repository by name.
     Remove(commands::remove::Args),
+    /// Report working-tree, branch, and upstream state across registered repos.
+    Status(commands::status::Args),
     /// Manage workspaces (named groupings of registered repositories).
     Workspace(commands::workspace::Args),
 }
@@ -47,6 +49,7 @@ fn main() -> ExitCode {
         Command::Add(args) => commands::add::run(args, &config_dir),
         Command::List(args) => commands::list::run(&args, &config_dir),
         Command::Remove(args) => commands::remove::run(&args, &config_dir),
+        Command::Status(args) => commands::status::run(&args, &config_dir),
         Command::Workspace(args) => commands::workspace::run(args, &config_dir),
     };
 

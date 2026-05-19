@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use comfy_table::{Cell, Table, presets::UTF8_FULL};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
-use repograph_core::{Repo, RepographError, Workspace};
+use rayon::prelude::*;
+use repograph_core::{Repo, RepoStatus, RepographError, Workspace};
 use serde::Serialize;
 
 /// Decided once at command entry; passed down so renderers never re-check.
@@ -260,6 +262,110 @@ pub fn render_workspace_show(
     }
 }
 
+#[derive(Serialize)]
+struct StatusEnvelope<'a> {
+    repos: &'a [RepoStatus],
+}
+
+/// Render per-repo status entries. TTY mode produces a `comfy-table` with the
+/// documented columns; JSON mode produces a `{ "repos": [...] }` envelope
+/// where every entry includes an explicit `error` field (null on healthy rows).
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when writing to stdout fails.
+pub fn render_statuses(mode: OutputMode, statuses: &[RepoStatus]) -> Result<(), RepographError> {
+    match mode {
+        OutputMode::Json => write_status_json(statuses),
+        OutputMode::Tty => write_status_table(statuses),
+    }
+}
+
+fn write_status_json(statuses: &[RepoStatus]) -> Result<(), RepographError> {
+    let envelope = StatusEnvelope { repos: statuses };
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &envelope).map_err(serde_json_to_repograph)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
+fn write_status_table(statuses: &[RepoStatus]) -> Result<(), RepographError> {
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.set_header(vec![
+        "Name", "Branch", "Upstream", "Ahead", "Behind", "Dirty", "State",
+    ]);
+    for s in statuses {
+        table.add_row(vec![
+            Cell::new(&s.name),
+            Cell::new(s.branch.as_deref().unwrap_or("-")),
+            Cell::new(s.upstream.as_deref().unwrap_or("-")),
+            Cell::new(s.ahead),
+            Cell::new(s.behind),
+            Cell::new(if s.dirty { "yes" } else { "no" }),
+            Cell::new(state_label(s.state)),
+        ]);
+    }
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{table}")?;
+    Ok(())
+}
+
+const fn state_label(state: repograph_core::RepoState) -> &'static str {
+    use repograph_core::RepoState;
+    match state {
+        RepoState::Clean => "clean",
+        RepoState::Dirty => "dirty",
+        RepoState::Detached => "detached",
+        RepoState::Unborn => "unborn",
+        RepoState::Bare => "bare",
+        RepoState::Missing => "missing",
+    }
+}
+
+/// Run `body` over each item in `items` in parallel via `rayon`. When the
+/// `mode` is `Tty`, an `indicatif::MultiProgress` shows one spinner per item
+/// on stderr; the `MultiProgress` is dropped (clearing the spinners) before
+/// this function returns. In non-TTY mode no spinners are drawn — `body` runs
+/// in parallel with no UI.
+pub fn with_progress<T, R, F, B>(mode: OutputMode, items: &[T], label: F, body: B) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> String + Sync,
+    B: Fn(&T) -> R + Sync + Send,
+{
+    match mode {
+        OutputMode::Json => items.par_iter().map(body).collect(),
+        OutputMode::Tty => {
+            let progress = MultiProgress::new();
+            let style = ProgressStyle::with_template("{spinner} {msg}")
+                .unwrap_or_else(|_| ProgressStyle::default_spinner());
+            let bars: Vec<ProgressBar> = items
+                .iter()
+                .map(|item| {
+                    let pb = progress.add(ProgressBar::new_spinner());
+                    pb.set_style(style.clone());
+                    pb.set_message(label(item));
+                    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+                    pb
+                })
+                .collect();
+            let results: Vec<R> = items
+                .par_iter()
+                .zip(bars.par_iter())
+                .map(|(item, bar)| {
+                    let r = body(item);
+                    bar.finish_and_clear();
+                    r
+                })
+                .collect();
+            drop(progress);
+            results
+        }
+    }
+}
+
 fn serde_json_to_repograph(e: serde_json::Error) -> RepographError {
     if e.is_io() {
         RepographError::Io(e.into())
@@ -499,6 +605,9 @@ mod tests {
         let body = serde_json::to_string(&envelope).unwrap();
         // No `description` key (skipped) but `dangling` MUST be `[]`, not absent, not null.
         assert!(body.contains("\"dangling\":[]"), "got body: {body}");
-        assert!(!body.contains("description"), "description omitted; body: {body}");
+        assert!(
+            !body.contains("description"),
+            "description omitted; body: {body}"
+        );
     }
 }

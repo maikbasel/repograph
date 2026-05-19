@@ -13,6 +13,7 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
+| `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
 | `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
 | `repograph workspace rm <name>` | Delete a workspace. Registered repos are not touched. |
 | `repograph workspace ls [--json]` | List the registered workspaces with name, description, and member count. |
@@ -74,6 +75,63 @@ Empty registry: `{ "repos": [] }`.
 ```
 
 `dangling` is always present (even when empty), making drift trivially detectable by agent consumers. A dangling member also produces a `WARN` line on stderr.
+
+`repograph status --json` emits a `repos`-keyed envelope of richer per-repo status entries. The `error` field is always present (`null` on healthy rows) so consumers can branch on `repo.error != null` without a key-existence check:
+
+```json
+{
+  "repos": [
+    {
+      "name": "api",
+      "path": "/home/maik/IdeaProjects/api",
+      "branch": "main",
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "dirty": false,
+      "staged": 0,
+      "unstaged": 0,
+      "untracked": 0,
+      "state": "clean",
+      "error": null
+    },
+    {
+      "name": "ui",
+      "path": "/home/maik/IdeaProjects/ui",
+      "branch": "feat/x",
+      "upstream": "origin/feat/x",
+      "ahead": 2,
+      "behind": 0,
+      "dirty": true,
+      "staged": 1,
+      "unstaged": 1,
+      "untracked": 0,
+      "state": "dirty",
+      "error": null
+    },
+    {
+      "name": "ghost",
+      "path": "/home/maik/IdeaProjects/ghost",
+      "branch": null,
+      "upstream": null,
+      "ahead": 0,
+      "behind": 0,
+      "dirty": false,
+      "staged": 0,
+      "unstaged": 0,
+      "untracked": 0,
+      "state": "missing",
+      "error": "no such file or directory"
+    }
+  ]
+}
+```
+
+`state` is one of `clean`, `dirty`, `detached`, `unborn`, `bare`, `missing`. A missing or broken repo in a batch run does not abort the command (exit `0`); the failing row carries a populated `error` field and a `WARN` line lands on stderr. Asking explicitly for a single broken repo (`repograph status <name>`) exits `3` instead — that's a request, not a batch.
+
+`repograph status --workspace acme --json` restricts the scope to live members of a workspace (dangling members silently skipped, parity with `list --workspace`).
+
+`repograph status --fetch` is opt-in and runs `git fetch` against each repo's upstream remote before computing ahead/behind. Without it, no network calls happen. A fetch failure on any one repo populates that repo's `error` field and isolates the failure; the rest of the batch still completes.
 
 ### Filtering by workspace
 

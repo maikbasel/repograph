@@ -13,7 +13,7 @@ pub use config::{
     WorkspaceResolution, validate_workspace_name,
 };
 pub use error::RepographError;
-pub use git::validate_git_repo;
+pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};
 
 /// Crate version, sourced from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
