@@ -71,7 +71,10 @@ fn create_without_description() {
 
     let body = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
     assert!(body.contains("[workspace.acme]"));
-    assert!(!body.contains("description"), "no description key when absent: {body}");
+    assert!(
+        !body.contains("description"),
+        "no description key when absent: {body}"
+    );
 }
 
 #[test]
@@ -227,7 +230,10 @@ fn ls_empty_emits_empty_array() {
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.trim_end().contains("\"workspaces\":[]"), "got: {stdout}");
+    assert!(
+        stdout.trim_end().contains("\"workspaces\":[]"),
+        "got: {stdout}"
+    );
 }
 
 #[test]
@@ -299,10 +305,15 @@ fn show_json_envelope_lists_live_members_with_empty_dangling() {
     assert_eq!(v["name"], "acme");
     let members = v["members"].as_array().expect("members array");
     assert_eq!(members.len(), 2);
-    let names: Vec<&str> = members.iter().map(|m| m["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = members
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
     assert!(names.contains(&"api"));
     assert!(names.contains(&"ui"));
-    let dangling = v["dangling"].as_array().expect("dangling array always present");
+    let dangling = v["dangling"]
+        .as_array()
+        .expect("dangling array always present");
     assert!(dangling.is_empty());
 }
 
@@ -347,7 +358,10 @@ fn show_with_dangling_member_separates_live_and_tombstoned() {
     assert_eq!(dangling[0], "ghost");
 
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
-    assert!(stderr.contains("ghost"), "stderr warns about dangling: {stderr}");
+    assert!(
+        stderr.contains("ghost"),
+        "stderr warns about dangling: {stderr}"
+    );
 }
 
 #[test]
@@ -424,7 +438,10 @@ fn add_multiple_repos_sorted() {
     let api_pos = after.find("api").expect("api present");
     let libs_pos = after.find("libs").expect("libs present");
     let ui_pos = after.find("ui").expect("ui present");
-    assert!(api_pos < libs_pos && libs_pos < ui_pos, "members sorted: {after}");
+    assert!(
+        api_pos < libs_pos && libs_pos < ui_pos,
+        "members sorted: {after}"
+    );
 }
 
 #[test]
@@ -506,7 +523,10 @@ fn add_missing_repo_is_atomic() {
         .assert()
         .success();
     let v = parse_workspace_show_json(&out.get_output().stdout);
-    assert!(v["members"].as_array().unwrap().is_empty(), "no partial application");
+    assert!(
+        v["members"].as_array().unwrap().is_empty(),
+        "no partial application"
+    );
 }
 
 // ─── workspace remove ──────────────────────────────────────────────────────
@@ -649,7 +669,11 @@ fn list_filtered_by_workspace_skips_dangling() {
         .assert()
         .success();
 
-    repograph_cmd(&config_dir).arg("remove").arg("ghost").assert().success();
+    repograph_cmd(&config_dir)
+        .arg("remove")
+        .arg("ghost")
+        .assert()
+        .success();
 
     let out = repograph_cmd(&config_dir)
         .arg("list")
@@ -718,12 +742,19 @@ fn repo_remove_leaves_workspace_member_intact() {
         .assert()
         .success();
 
-    repograph_cmd(&config_dir).arg("remove").arg("api").assert().success();
+    repograph_cmd(&config_dir)
+        .arg("remove")
+        .arg("api")
+        .assert()
+        .success();
 
     // Members list still has `api`.
     let body = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
     assert!(body.contains("members"));
-    assert!(body.contains("\"api\""), "dangling member preserved: {body}");
+    assert!(
+        body.contains("\"api\""),
+        "dangling member preserved: {body}"
+    );
     assert!(!body.contains("[repo.api]"), "repo deregistered: {body}");
 }
 
@@ -748,7 +779,10 @@ fn registry_remove_behavior_unchanged_with_workspace_membership() {
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.trim().is_empty(), "stdout empty just like registry-core");
+    assert!(
+        stdout.trim().is_empty(),
+        "stdout empty just like registry-core"
+    );
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
     // Same stderr message shape as the registry-core tests (contains the name).
     assert!(stderr.contains("api"));
@@ -776,7 +810,11 @@ fn dangling_member_re_registers_cleanly() {
         .success();
 
     // Remove & confirm dangling.
-    repograph_cmd(&config_dir).arg("remove").arg("api").assert().success();
+    repograph_cmd(&config_dir)
+        .arg("remove")
+        .arg("api")
+        .assert()
+        .success();
     let out = repograph_cmd(&config_dir)
         .arg("workspace")
         .arg("show")
@@ -820,7 +858,11 @@ fn workspace_show_dangling_warning_on_stderr_only() {
         .arg("ghost")
         .assert()
         .success();
-    repograph_cmd(&config_dir).arg("remove").arg("ghost").assert().success();
+    repograph_cmd(&config_dir)
+        .arg("remove")
+        .arg("ghost")
+        .assert()
+        .success();
 
     let out = repograph_cmd(&config_dir)
         .arg("workspace")
@@ -848,7 +890,10 @@ fn workspace_create_confirmation_on_stderr_only() {
         .assert()
         .success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.trim().is_empty(), "stdout empty for create: {stdout:?}");
+    assert!(
+        stdout.trim().is_empty(),
+        "stdout empty for create: {stdout:?}"
+    );
     let stderr = String::from_utf8_lossy(&out.get_output().stderr);
     assert!(stderr.contains("acme"));
 }
@@ -938,5 +983,8 @@ fn list_envelope_contains_repos_key_even_when_filtered() {
         .assert()
         .success();
     let envelope = parse_list_json(&out.get_output().stdout);
-    assert!(envelope.get("repos").is_some(), "envelope shape: {envelope}");
+    assert!(
+        envelope.get("repos").is_some(),
+        "envelope shape: {envelope}"
+    );
 }

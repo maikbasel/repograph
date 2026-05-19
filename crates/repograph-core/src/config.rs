@@ -322,7 +322,10 @@ pub fn validate_workspace_name(name: &str) -> Result<(), RepographError> {
         return Err(invalid_workspace_name(name, "must not be empty"));
     }
     if name.len() > MAX_WORKSPACE_NAME_LEN {
-        return Err(invalid_workspace_name(name, "must be at most 63 characters"));
+        return Err(invalid_workspace_name(
+            name,
+            "must be at most 63 characters",
+        ));
     }
     if RESERVED_WORKSPACE_NAMES.contains(&name) {
         return Err(invalid_workspace_name(name, "is a reserved name"));
@@ -553,9 +556,7 @@ mod tests {
     #[test]
     fn create_workspace_invalid_name_returns_invalid_name() {
         let mut cfg = Config::default();
-        let err = cfg
-            .create_workspace("Bad Name".into(), None)
-            .unwrap_err();
+        let err = cfg.create_workspace("Bad Name".into(), None).unwrap_err();
         assert!(matches!(err, RepographError::InvalidName { .. }));
         assert_eq!(err.exit_code(), 2);
         assert!(cfg.workspaces.is_empty());
