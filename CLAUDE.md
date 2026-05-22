@@ -99,6 +99,7 @@ cargo dist build   # local test of release artifacts
 **SAFE TO MODIFY**:
 
 - `crates/repograph-core/src/` — domain library (no clap, no terminal output)
+- `crates/repograph-core/src/agents.rs` — built-in agent toolchain registry (IDs + file patterns)
 - `crates/repograph-core/src/config.rs` — config model and persistence
 - `crates/repograph-core/src/git.rs` — git2 introspection helpers
 - `crates/repograph-core/src/context.rs` — Context aggregation logic
@@ -106,6 +107,7 @@ cargo dist build   # local test of release artifacts
 - `crates/repograph/src/` — CLI binary (presentation only)
 - `crates/repograph/src/main.rs` — entrypoint, tracing init, clap dispatch
 - `crates/repograph/src/output.rs` — TTY detection and rendering (comfy-table, JSON)
+- `crates/repograph/src/prompt.rs` — cliclack helpers, detection, auto-prompt fallback
 - `crates/repograph/src/commands/` — one file per subcommand
 
 **NEVER MODIFY**:
@@ -195,13 +197,14 @@ For verification before archive, run `openspec validate <change>` directly. To g
 
 ### Phase-to-Change Mapping
 
-| Dev Plan Phase        | OpenSpec Change Name |
-|-----------------------|----------------------|
-| 1 — Core Registry     | `registry-core`      |
-| 2 — Workspaces        | `workspace-support`  |
-| 3 — Git Introspection | `git-status`         |
-| 4 — Agent Context     | `context-command`    |
-| 5 — Shell & Polish    | `shell-integration`  |
+| Dev Plan Phase                    | OpenSpec Change Name |
+|-----------------------------------|----------------------|
+| 1 — Core Registry                 | `registry-core`      |
+| 2 — Workspaces                    | `workspace-support`  |
+| 3 — Git Introspection             | `git-status`         |
+| 4a — Agent Toolchain Setup        | `init-command`       |
+| 4b — Agent Context                | `context-command`    |
+| 5 — Shell & Polish                | `shell-integration`  |
 
 ### Rules
 

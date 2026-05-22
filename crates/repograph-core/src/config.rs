@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agents::AgentId;
 use crate::error::RepographError;
 
 /// On-disk file name within the config directory.
@@ -46,7 +47,37 @@ pub struct Workspace {
 /// [`Repo`] entry; dangling entries borrow only the orphaned name.
 pub type WorkspaceResolution<'a> = (Vec<(&'a String, &'a Repo)>, Vec<&'a String>);
 
-/// Top-level config aggregating all registered repos and workspaces.
+/// The `[agents]` section of the on-disk config. Presence of this section
+/// signals that `repograph init` has been run; absence triggers the first-run
+/// prompt the next time an agent-consuming command runs.
+///
+/// `selected` preserves the order the user chose at init time so the rendered
+/// config and any downstream agent prompt have stable, predictable output.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Agents {
+    #[serde(default)]
+    pub selected: Vec<AgentId>,
+}
+
+/// The `[settings]` section of the on-disk config. User-tunable knobs that
+/// don't fit naturally under `[agents]`, `[repo.*]`, or `[workspace.*]`.
+///
+/// All fields are optional; absent values fall back to either an env var
+/// (where one exists, e.g. `REPOGRAPH_PROJECT_ROOT` for `projects_root`) or
+/// to "ask the user next time they need it" semantics.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    /// User-declared root folder for git projects (e.g. `~/IdeaProjects`,
+    /// `~/code`). When set, `repograph init`'s repo-registration step scans
+    /// this directly instead of probing the filesystem for common
+    /// conventions. `None` means "ask the user next time they need it" or
+    /// "fall back to free-form input with autocomplete."
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projects_root: Option<PathBuf>,
+}
+
+/// Top-level config aggregating all registered repos, workspaces, and the
+/// user's agent selection.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, rename = "repo", skip_serializing_if = "BTreeMap::is_empty")]
@@ -57,6 +88,15 @@ pub struct Config {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     workspaces: BTreeMap<String, Workspace>,
+    /// User's agent toolchain selection. `None` means init has not been run;
+    /// `Some(Agents { selected: vec![] })` means init was run and the user
+    /// explicitly opted out of agent docs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agents: Option<Agents>,
+    /// Persistent user preferences (project root, …). Omitted from
+    /// serialization when empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings: Option<Settings>,
 }
 
 impl Config {
@@ -70,6 +110,35 @@ impl Config {
     #[must_use]
     pub const fn workspaces(&self) -> &BTreeMap<String, Workspace> {
         &self.workspaces
+    }
+
+    /// Read-only view of the user's agent selection. Returns `None` when no
+    /// `[agents]` section is present (init has not been run); `Some(_)` when
+    /// init has run, even if `selected` is empty.
+    #[must_use]
+    pub const fn agents(&self) -> Option<&Agents> {
+        self.agents.as_ref()
+    }
+
+    /// Replace the `[agents]` section with the given selection. Passing
+    /// `Some(Agents { selected: vec![] })` writes a configured-but-empty
+    /// section; passing `None` removes the section (and signals "not
+    /// initialized" to consumers).
+    pub fn set_agents(&mut self, agents: Option<Agents>) {
+        self.agents = agents;
+    }
+
+    /// Read-only view of the user's persistent settings (project root,
+    /// future preferences). Returns `None` when no `[settings]` section is
+    /// present.
+    #[must_use]
+    pub const fn settings(&self) -> Option<&Settings> {
+        self.settings.as_ref()
+    }
+
+    /// Replace the `[settings]` section. Pass `None` to remove the section.
+    pub fn set_settings(&mut self, settings: Option<Settings>) {
+        self.settings = settings;
     }
 
     /// Platform-default config directory: `dirs::config_dir() / "repograph"`.
@@ -718,6 +787,209 @@ mod tests {
         let billing = loaded.workspaces.get("billing").unwrap();
         assert!(billing.description.is_none());
         assert!(billing.members.is_empty());
+    }
+
+    // --- Agents schema tests ---
+
+    #[test]
+    fn config_without_agents_section_loads_as_none() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path()).unwrap();
+        std::fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            "[repo.foo]\npath = \"/tmp/foo\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load(tmp.path()).unwrap();
+        assert!(cfg.agents().is_none());
+        assert!(cfg.repos.contains_key("foo"));
+    }
+
+    #[test]
+    fn config_with_empty_agents_is_some_with_empty_selection() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path()).unwrap();
+        std::fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            "[agents]\nselected = []\n",
+        )
+        .unwrap();
+        let cfg = Config::load(tmp.path()).unwrap();
+        let agents = cfg.agents().expect("agents present");
+        assert!(agents.selected.is_empty());
+    }
+
+    #[test]
+    fn save_with_agents_none_omits_section() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        // agents remains None.
+        cfg.save(tmp.path()).unwrap();
+        let body = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert!(
+            !body.contains("[agents]"),
+            "no [agents] section when agents is None, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn save_with_empty_agents_writes_section_header() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_agents(Some(Agents { selected: vec![] }));
+        cfg.save(tmp.path()).unwrap();
+        let body = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert!(
+            body.contains("[agents]"),
+            "configured-but-empty still writes section header, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn agents_selection_order_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_agents(Some(Agents {
+            selected: vec![AgentId::Cursor, AgentId::ClaudeCode, AgentId::AgentsMd],
+        }));
+        cfg.save(tmp.path()).unwrap();
+        let body = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        let cursor = body.find("\"cursor\"").expect("cursor present");
+        let claude = body.find("\"claude-code\"").expect("claude-code present");
+        let agents_md = body.find("\"agents-md\"").expect("agents-md present");
+        assert!(cursor < claude && claude < agents_md, "order preserved");
+
+        let reloaded = Config::load(tmp.path()).unwrap();
+        assert_eq!(
+            reloaded.agents().unwrap().selected,
+            vec![AgentId::Cursor, AgentId::ClaudeCode, AgentId::AgentsMd]
+        );
+    }
+
+    #[test]
+    fn agents_round_trip_with_repos_and_workspaces_is_byte_stable() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.add_repo("api".into(), make("/tmp/api")).unwrap();
+        cfg.create_workspace("acme".into(), None).unwrap();
+        cfg.add_members("acme", &["api".into()]).unwrap();
+        cfg.set_agents(Some(Agents {
+            selected: vec![AgentId::ClaudeCode],
+        }));
+        cfg.save(tmp.path()).unwrap();
+        let body_first = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+
+        let loaded = Config::load(tmp.path()).unwrap();
+        loaded.save(tmp.path()).unwrap();
+        let body_second = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert_eq!(
+            body_first, body_second,
+            "round-trip byte-identical with [agents]"
+        );
+    }
+
+    #[test]
+    fn unknown_agent_id_in_config_produces_parse_error() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path()).unwrap();
+        std::fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            "[agents]\nselected = [\"claude-code\", \"bogus\"]\n",
+        )
+        .unwrap();
+        let err = Config::load(tmp.path()).unwrap_err();
+        assert!(
+            matches!(err, RepographError::ConfigParse(_)),
+            "expected ConfigParse, got {err:?}"
+        );
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    // --- Settings schema tests ---
+
+    #[test]
+    fn config_without_settings_section_loads_as_none() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path()).unwrap();
+        std::fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            "[agents]\nselected = []\n",
+        )
+        .unwrap();
+        let cfg = Config::load(tmp.path()).unwrap();
+        assert!(cfg.settings().is_none());
+    }
+
+    #[test]
+    fn save_with_settings_none_omits_section() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_agents(Some(Agents {
+            selected: vec![AgentId::ClaudeCode],
+        }));
+        // settings remains None.
+        cfg.save(tmp.path()).unwrap();
+        let body = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert!(
+            !body.contains("[settings]"),
+            "no [settings] section when settings is None, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn settings_projects_root_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_settings(Some(Settings {
+            projects_root: Some(PathBuf::from("/home/dev/IdeaProjects")),
+        }));
+        cfg.save(tmp.path()).unwrap();
+        let reloaded = Config::load(tmp.path()).unwrap();
+        assert_eq!(
+            reloaded.settings().unwrap().projects_root.as_deref(),
+            Some(Path::new("/home/dev/IdeaProjects"))
+        );
+    }
+
+    #[test]
+    fn settings_with_none_projects_root_still_writes_section_header() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_settings(Some(Settings::default()));
+        cfg.save(tmp.path()).unwrap();
+        let body = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert!(
+            body.contains("[settings]"),
+            "configured-but-empty settings still writes header, got:\n{body}"
+        );
+        assert!(
+            !body.contains("projects_root"),
+            "absent field is omitted, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn settings_round_trip_with_agents_and_repos_is_byte_stable() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.add_repo("api".into(), make("/tmp/api")).unwrap();
+        cfg.set_agents(Some(Agents {
+            selected: vec![AgentId::ClaudeCode],
+        }));
+        cfg.set_settings(Some(Settings {
+            projects_root: Some(PathBuf::from("/home/dev/IdeaProjects")),
+        }));
+        cfg.save(tmp.path()).unwrap();
+        let body_first = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+
+        let loaded = Config::load(tmp.path()).unwrap();
+        loaded.save(tmp.path()).unwrap();
+        let body_second = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();
+        assert_eq!(
+            body_first, body_second,
+            "round-trip byte-identical with [settings]"
+        );
     }
 
     #[test]

@@ -55,6 +55,14 @@ pub enum RepographError {
         name: String,
         reason: &'static str,
     },
+
+    /// An interactive code path required a TTY but stdout was redirected, and
+    /// no non-interactive escape hatch (flag, env var) was provided. Maps to
+    /// exit code `2`. The payload is the full user-visible guidance message
+    /// (e.g. "agents not configured; run `repograph init`" or "stdout is not
+    /// a TTY; pass `--no-prompt --agents <list>` …").
+    #[error("{0}")]
+    NeedsInit(String),
 }
 
 impl RepographError {
@@ -67,7 +75,7 @@ impl RepographError {
             Self::PermissionDenied { .. } => 4,
             Self::GitOpen { .. } | Self::NotFound { .. } => 3,
             Self::Conflict { .. } => 5,
-            Self::InvalidName { .. } => 2,
+            Self::InvalidName { .. } | Self::NeedsInit { .. } => 2,
             Self::Io(_) | Self::ConfigParse(_) | Self::ConfigWrite(_) | Self::UsageError(_) => 1,
         }
     }
@@ -139,6 +147,13 @@ mod tests {
             reason: "must be lowercase",
         };
         assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn needs_init_maps_to_2() {
+        let err = RepographError::NeedsInit("agents not configured; run `repograph init`".into());
+        assert_eq!(err.exit_code(), 2);
+        assert!(err.to_string().contains("repograph init"));
     }
 
     #[test]

@@ -4,13 +4,15 @@
 //! terminal I/O — the binary crate (and a future MCP server) depend on this
 //! crate to keep their concerns separate.
 
+pub mod agents;
 pub mod config;
 pub mod error;
 pub mod git;
 
+pub use agents::AgentId;
 pub use config::{
-    CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo, Workspace,
-    WorkspaceResolution, validate_workspace_name,
+    Agents, CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo,
+    Settings, Workspace, WorkspaceResolution, validate_workspace_name,
 };
 pub use error::RepographError;
 pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};

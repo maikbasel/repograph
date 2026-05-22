@@ -11,6 +11,7 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | Command | Purpose |
 |---------|---------|
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
+| `repograph init` | Interactive setup — pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; optionally add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
 | `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
@@ -45,7 +46,61 @@ members = [
     "changelog-x",
     "repograph",
 ]
+
+[agents]
+selected = [
+    "claude-code",
+    "agents-md",
+]
+
+[settings]
+projects_root = "/home/maik/IdeaProjects"
 ```
+
+`[agents]` is written by `repograph init` (or auto-prompted by future agent-consuming commands on first run). Presence of the section signals "init has run"; an empty `selected = []` is a valid configured state (user opted out of agent docs).
+
+`[settings] projects_root` records where the user keeps their git projects, asked once during `repograph init` and reused by every subsequent repo-registration. The env var `REPOGRAPH_PROJECT_ROOT` overrides this at runtime (useful for CI / sandbox testing / dotfile parity). An empty env value falls through to the config value. Change the stored path anytime via `repograph init` → "Change project root".
+
+### First run
+
+Interactive (TTY):
+
+```bash
+$ repograph init
+```
+
+A cliclack-driven flow:
+
+1. **Agent multiselect** — detection-preselected, deselectable.
+2. **Projects root** — pick from detected candidates (only those containing ≥1 git repo are surfaced), enter a custom path, or skip. Persisted to `[settings] projects_root`; asked only once.
+3. **Bulk repo registration** — `multiselect` of unregistered git repos under your projects root (no preselection — opt-in per repo), then an optional `Register a repo at a custom path?` loop for anything outside that root. The free-form path input has filesystem autocomplete (Tab) and `~` expansion. Basename conflicts during bulk add prompt once for an alternative name and otherwise log + skip so the rest of the batch proceeds.
+4. **Per-repo workspace routing** — when N>0 repos were registered, an outer `Add these N repos to workspaces?` confirm gates the step. On yes, you first walk an optional create-new loop (gated by a `Create new workspaces first?` confirm when workspaces already exist; entered directly otherwise) to seed the target pool. Then, for each registered repo in turn, a `Workspaces for '<repo>'` multiselect lets you pick that specific repo's workspaces — zero, one, or many. Different repos can land in different workspaces; empty picks leave a repo unassigned. The config is saved once at the end. The success log uses singular wording when exactly one repo lands in exactly one workspace; otherwise a multi-line `workspace assignments:` block lists each assigned repo with its chosen workspaces.
+5. **Summary** — final agents / repos / workspaces counts plus next-step hints.
+
+Re-running on an existing config shows a settings panel with actions including "Update agent selection", "Change project root", "Register another repo" (re-enters the bulk flow), "Manage workspaces", "Reset everything", "Cancel".
+
+Inside "Manage workspaces", **Create** asks for a name and then offers an immediate `multiselect` to populate the new workspace with any registered repos (default `yes`; skipped when no repos are registered). **Add members** also uses a `multiselect`, filtered to the repos that are NOT already in the chosen workspace — so a single trip through the menu can add many repos at once. Empty submissions are valid no-ops; if every registered repo is already a member (or the registry is empty), a WARN log explains the no-op and the menu returns without writing.
+
+Non-interactive (CI, dotfiles, non-TTY):
+
+```bash
+$ repograph init --no-prompt --agents claude-code,cursor
+```
+
+`--no-prompt` requires `--agents`. The empty string `--agents ""` is valid and writes `selected = []`.
+
+### Agent registry
+
+`repograph init` writes the user's selection of agent toolchains to `[agents].selected`. Each ID maps to a known set of rule-file patterns inside a repository. The agent context command (Phase 4b, upcoming) will inline these files into its output.
+
+| Agent ID      | File patterns                            |
+|---------------|------------------------------------------|
+| `claude-code` | `CLAUDE.md`                              |
+| `agents-md`   | `AGENTS.md`                              |
+| `cursor`      | `.cursor/rules/*.md`, `.cursorrules`     |
+| `aider`       | `CONVENTIONS.md`                         |
+| `windsurf`    | `.windsurfrules`                         |
+| `copilot`     | `.github/copilot-instructions.md`        |
 
 ### JSON output shapes
 
@@ -147,7 +202,7 @@ Restricts the registry listing to live members of `acme`. Dangling members are s
 |------|---------|
 | 0 | Success |
 | 1 | General failure (malformed config, runtime usage error) |
-| 2 | CLI argument error (clap usage) |
+| 2 | CLI argument error (clap usage); also: `repograph init` in non-TTY without `--no-prompt --agents`, and (in future commands) agents-not-configured in non-TTY |
 | 3 | Resource not found (path is not a git repo, name not registered) |
 | 4 | Permission denied (cannot read or write the config file) |
 | 5 | Conflict (name or path already registered) |

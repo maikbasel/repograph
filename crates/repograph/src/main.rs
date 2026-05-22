@@ -2,6 +2,7 @@
 
 mod commands;
 mod output;
+mod prompt;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -26,6 +27,9 @@ struct Cli {
 enum Command {
     /// Register a local git repository.
     Add(commands::add::Args),
+    /// Interactive setup — pick the agent toolchain(s) you use; optionally
+    /// register a repo and assign it to a workspace.
+    Init(commands::init::Args),
     /// List the registered repositories.
     List(commands::list::Args),
     /// Remove a registered repository by name.
@@ -47,6 +51,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Add(args) => commands::add::run(args, &config_dir),
+        Command::Init(args) => commands::init::run(&args, &config_dir),
         Command::List(args) => commands::list::run(&args, &config_dir),
         Command::Remove(args) => commands::remove::run(&args, &config_dir),
         Command::Status(args) => commands::status::run(&args, &config_dir),
