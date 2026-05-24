@@ -27,6 +27,10 @@ struct Cli {
 enum Command {
     /// Register a local git repository.
     Add(commands::add::Args),
+    /// Aggregate per-repo agent docs (CLAUDE.md, AGENTS.md, .cursor/rules,
+    /// CONVENTIONS.md, .windsurfrules, …) into a single payload — JSON by
+    /// default for piping, Markdown when stdout is a TTY.
+    Context(commands::context::Args),
     /// Interactive setup — pick the agent toolchain(s) you use; optionally
     /// register a repo and assign it to a workspace.
     Init(commands::init::Args),
@@ -51,6 +55,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Add(args) => commands::add::run(args, &config_dir),
+        Command::Context(args) => commands::context::run(&args, &config_dir),
         Command::Init(args) => commands::init::run(&args, &config_dir),
         Command::List(args) => commands::list::run(&args, &config_dir),
         Command::Remove(args) => commands::remove::run(&args, &config_dir),

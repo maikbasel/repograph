@@ -7,7 +7,7 @@ use comfy_table::{Cell, Table, presets::UTF8_FULL};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use rayon::prelude::*;
-use repograph_core::{Repo, RepoStatus, RepographError, Workspace};
+use repograph_core::{Context, Repo, RepoContext, RepoStatus, RepographError, Scope, Workspace};
 use serde::Serialize;
 
 /// Decided once at command entry; passed down so renderers never re-check.
@@ -323,6 +323,156 @@ const fn state_label(state: repograph_core::RepoState) -> &'static str {
     }
 }
 
+/// Render a `Context` payload to stdout. JSON mode emits a single-line
+/// `serde_json` payload (no trailing newline — `repograph context | jq .`
+/// works either way, but agents consuming a stream get one record per
+/// invocation). TTY mode emits a Markdown document with one section per repo
+/// and the same data as the JSON payload (no truncation).
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when writing to stdout fails.
+pub fn render_context(mode: OutputMode, context: &Context) -> Result<(), RepographError> {
+    match mode {
+        OutputMode::Json => render_context_json(context, &mut io::stdout().lock()),
+        OutputMode::Tty => render_context_markdown(context, &mut io::stdout().lock()),
+    }
+}
+
+/// JSON renderer split out for unit testability — writes the envelope verbatim
+/// and (deliberately) NO trailing newline so a `--json` invocation pipes
+/// cleanly into a JSON-aware consumer that doesn't tolerate trailing
+/// whitespace.
+fn render_context_json<W: Write>(
+    context: &Context,
+    writer: &mut W,
+) -> Result<(), RepographError> {
+    serde_json::to_writer(&mut *writer, context).map_err(serde_json_to_repograph)?;
+    Ok(())
+}
+
+/// Markdown renderer split out for unit testability. Writes the same data the
+/// JSON path carries, in a structure paste-ready for chat clients that render
+/// Markdown (Claude, `ChatGPT`, GitHub, etc.).
+fn render_context_markdown<W: Write>(
+    context: &Context,
+    writer: &mut W,
+) -> Result<(), RepographError> {
+    let scope_phrase = scope_phrase(&context.scope);
+    writeln!(
+        writer,
+        "# repograph context — {scope_phrase} ({} repo{}, {} agent{})",
+        context.repos.len(),
+        if context.repos.len() == 1 { "" } else { "s" },
+        context.agents.len(),
+        if context.agents.len() == 1 { "" } else { "s" },
+    )?;
+    writeln!(writer)?;
+
+    for warning in &context.warnings {
+        writeln!(writer, "> **warning:** {warning}")?;
+        writeln!(writer)?;
+    }
+
+    for repo in &context.repos {
+        render_repo_markdown(writer, repo)?;
+    }
+    Ok(())
+}
+
+fn scope_phrase(scope: &Scope) -> String {
+    match scope {
+        Scope::All => "all registered repos".to_string(),
+        Scope::Workspace { name } => format!("workspace `{name}`"),
+        Scope::Repos { repos } => {
+            let mut s = String::from("repos ");
+            for (i, name) in repos.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                s.push('`');
+                s.push_str(name);
+                s.push('`');
+            }
+            s
+        }
+    }
+}
+
+fn render_repo_markdown<W: Write>(
+    writer: &mut W,
+    repo: &RepoContext,
+) -> Result<(), RepographError> {
+    let branch_label = repo.branch.as_deref().unwrap_or("none");
+    writeln!(writer, "## {}  (branch: {branch_label})", repo.name)?;
+    writeln!(writer)?;
+    writeln!(writer, "`{}`", repo.path.display())?;
+    writeln!(writer)?;
+
+    for warning in &repo.warnings {
+        writeln!(writer, "> **warning:** {warning}")?;
+        writeln!(writer)?;
+    }
+
+    for doc in &repo.agent_docs {
+        if doc.files.is_empty() {
+            continue;
+        }
+        writeln!(writer, "### {}", doc.agent.as_str())?;
+        writeln!(writer)?;
+        for file in &doc.files {
+            let path_str = file
+                .path
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            writeln!(
+                writer,
+                "#### {path_str} ({})",
+                human_size(file.bytes)
+            )?;
+            writeln!(writer)?;
+            let fence = pick_fence(&file.content);
+            writeln!(writer, "{fence}")?;
+            writer.write_all(file.content.as_bytes())?;
+            if !file.content.ends_with('\n') {
+                writeln!(writer)?;
+            }
+            writeln!(writer, "{fence}")?;
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+/// Pick a code-fence string that won't be terminated by `content`. Default is
+/// triple-backtick; falls back to triple-tilde when the content contains a
+/// triple-backtick line (e.g. CLAUDE.md files that embed Markdown samples).
+fn pick_fence(content: &str) -> &'static str {
+    if content.lines().any(|line| line.trim_start().starts_with("```")) {
+        "~~~"
+    } else {
+        "```"
+    }
+}
+
+/// Human-readable byte size: `"123 B"`, `"1.2 KB"`, `"4.5 MB"`. Single decimal
+/// place above `1024`. Below 1024, integer bytes for precision.
+#[allow(clippy::cast_precision_loss)]
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
+    if bytes < KB {
+        format!("{bytes} B")
+    } else if bytes < MB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else if bytes < GB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    }
+}
+
 /// Run `body` over each item in `items` in parallel via `rayon`. When the
 /// `mode` is `Tty`, an `indicatif::MultiProgress` shows one spinner per item
 /// on stderr; the `MultiProgress` is dropped (clearing the spinners) before
@@ -580,6 +730,139 @@ mod tests {
         let d = v["dangling"].as_array().expect("dangling is an array");
         assert_eq!(d.len(), 1);
         assert_eq!(d[0], "ghost");
+    }
+
+    // ─── Context renderers ────────────────────────────────────────────────
+
+    fn synth_context(scope: Scope, content: &str) -> Context {
+        use repograph_core::{AgentDoc, AgentId, MatchedFile, RepoContext, SCHEMA_VERSION};
+        Context {
+            schema_version: SCHEMA_VERSION,
+            generated_at: "2026-05-24T00:00:00Z".into(),
+            agents: vec![AgentId::ClaudeCode],
+            scope,
+            repos: vec![RepoContext {
+                name: "r".into(),
+                path: PathBuf::from("/tmp/r"),
+                branch: Some("main".into()),
+                agent_docs: vec![AgentDoc {
+                    agent: AgentId::ClaudeCode,
+                    files: vec![MatchedFile {
+                        path: PathBuf::from("CLAUDE.md"),
+                        bytes: content.len() as u64,
+                        content: content.to_string(),
+                    }],
+                }],
+                warnings: vec![],
+            }],
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn context_json_renderer_writes_single_object_no_trailing_newline() {
+        let ctx = synth_context(Scope::All, "body\n");
+        let mut buf: Vec<u8> = Vec::new();
+        render_context_json(&ctx, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(!s.ends_with('\n'), "JSON path emits no trailing newline");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema_version"], 1);
+    }
+
+    #[test]
+    fn context_markdown_renderer_emits_headers_and_fenced_code() {
+        let ctx = synth_context(Scope::All, "hello\n");
+        let mut buf: Vec<u8> = Vec::new();
+        render_context_markdown(&ctx, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("# repograph context"),
+            "top-level header present: {s}"
+        );
+        assert!(
+            s.contains("## r  (branch: main)"),
+            "repo header present: {s}"
+        );
+        assert!(s.contains("`/tmp/r`"), "path rendered as inline code: {s}");
+        assert!(s.contains("### claude-code"), "agent header present: {s}");
+        assert!(
+            s.contains("#### CLAUDE.md ("),
+            "file header with size present: {s}"
+        );
+        assert!(s.contains("```"), "fenced code block present: {s}");
+        assert!(s.contains("hello"), "file content inlined: {s}");
+    }
+
+    #[test]
+    fn context_markdown_renderer_uses_tilde_fence_when_content_contains_backtick_fence() {
+        let ctx = synth_context(Scope::All, "intro\n```bash\nls\n```\nend\n");
+        let mut buf: Vec<u8> = Vec::new();
+        render_context_markdown(&ctx, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("~~~"), "tilde fence used: {s}");
+        // The original backticks must appear inside, not be re-fenced.
+        assert!(s.contains("```bash"), "embedded backticks preserved: {s}");
+    }
+
+    #[test]
+    fn context_markdown_renderer_handles_workspace_scope() {
+        let ctx = synth_context(
+            Scope::Workspace {
+                name: "team".into(),
+            },
+            "x",
+        );
+        let mut buf: Vec<u8> = Vec::new();
+        render_context_markdown(&ctx, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("workspace `team`"), "scope phrase: {s}");
+    }
+
+    #[test]
+    fn context_markdown_renderer_renders_warnings_as_blockquote() {
+        use repograph_core::{RepoContext, SCHEMA_VERSION};
+        let ctx = Context {
+            schema_version: SCHEMA_VERSION,
+            generated_at: "2026-05-24T00:00:00Z".into(),
+            agents: vec![],
+            scope: Scope::All,
+            repos: vec![RepoContext {
+                name: "ghost".into(),
+                path: PathBuf::from("/tmp/ghost"),
+                branch: None,
+                agent_docs: vec![],
+                warnings: vec!["path no longer accessible".into()],
+            }],
+            warnings: vec![],
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        render_context_markdown(&ctx, &mut buf).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("> **warning:** path no longer accessible"),
+            "blockquote warning rendered: {s}"
+        );
+        assert!(
+            !s.contains("###"),
+            "missing repo section has no agent subheadings: {s}"
+        );
+    }
+
+    #[test]
+    fn human_size_handles_each_unit_band() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(999), "999 B");
+        assert_eq!(human_size(1024), "1.0 KB");
+        assert_eq!(human_size(1024 * 1024), "1.0 MB");
+        assert_eq!(human_size(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn pick_fence_falls_back_when_content_has_backtick_fence() {
+        assert_eq!(pick_fence("plain text\n"), "```");
+        assert_eq!(pick_fence("```rust\nfoo\n```"), "~~~");
+        assert_eq!(pick_fence("  ```python\n"), "~~~");
     }
 
     #[test]

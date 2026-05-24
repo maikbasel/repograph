@@ -11,6 +11,7 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | Command | Purpose |
 |---------|---------|
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
+| `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
 | `repograph init` | Interactive setup — pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; optionally add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
@@ -91,7 +92,7 @@ $ repograph init --no-prompt --agents claude-code,cursor
 
 ### Agent registry
 
-`repograph init` writes the user's selection of agent toolchains to `[agents].selected`. Each ID maps to a known set of rule-file patterns inside a repository. The agent context command (Phase 4b, upcoming) will inline these files into its output.
+`repograph init` writes the user's selection of agent toolchains to `[agents].selected`. Each ID maps to a known set of rule-file patterns inside a repository. `repograph context` inlines the matching files into its payload (one per selected agent, scoped to the in-scope repos).
 
 | Agent ID      | File patterns                            |
 |---------------|------------------------------------------|
@@ -187,6 +188,62 @@ Empty registry: `{ "repos": [] }`.
 `repograph status --workspace acme --json` restricts the scope to live members of a workspace (dangling members silently skipped, parity with `list --workspace`).
 
 `repograph status --fetch` is opt-in and runs `git fetch` against each repo's upstream remote before computing ahead/behind. Without it, no network calls happen. A fetch failure on any one repo populates that repo's `error` field and isolates the failure; the rest of the batch still completes.
+
+### Agent context
+
+`repograph context` is the headline command — it produces the payload an AI agent actually consumes. Three scope modes (mutually exclusive at the CLI layer):
+
+```bash
+repograph context                          # every registered repo
+repograph context --workspace team-alpha   # members of one workspace
+repograph context api ui lib               # explicitly named repos
+```
+
+On first use without `[agents]` configured, an interactive TTY prompts through the same multiselect as `repograph init`; non-TTY first use exits `2` and names `repograph init`.
+
+Output mode:
+
+- **TTY default** — Markdown to stdout (paste-ready into Claude / Cursor / ChatGPT). One `## <repo>` section per repo, one `### <agent>` subsection, one fenced code block per matched file. Fences fall back to `~~~` if the file content contains a backtick fence (so an inlined `CLAUDE.md` with code samples renders correctly).
+- **`--json` / non-TTY** — single-line JSON object on stdout, versioned by `schema_version`. Each repo block carries `name`, canonical `path`, current `branch` (`null` for detached / unborn / bare / missing), one `agent_docs` entry per selected agent (each with sorted `files`), and an inline `warnings` array. Top-level `warnings` carries global issues.
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-24T14:23:11Z",
+  "agents": ["claude-code", "cursor"],
+  "scope": { "kind": "workspace", "name": "team-alpha" },
+  "repos": [
+    {
+      "name": "api",
+      "path": "/home/maik/IdeaProjects/api",
+      "branch": "main",
+      "agent_docs": [
+        {
+          "agent": "claude-code",
+          "files": [ { "path": "CLAUDE.md", "bytes": 1234, "content": "# api\n…" } ]
+        },
+        {
+          "agent": "cursor",
+          "files": [
+            { "path": ".cursor/rules/style.md", "bytes": 567, "content": "…" },
+            { "path": ".cursorrules", "bytes": 89, "content": "…" }
+          ]
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}
+```
+
+Behavior contract:
+
+- **No truncation.** File contents are inlined verbatim. Total bytes is logged on stderr; downstream tooling owns the context-window budget.
+- **Per-file errors are inline, not fatal.** Unreadable, non-UTF-8, or missing files become warning entries on the enclosing repo's `warnings` array; the rest of the payload still ships and exit is `0`.
+- **Bounded filesystem walk.** Flat patterns (`CLAUDE.md`) are existence-checked; glob patterns (`.cursor/rules/*.md`) are matched against the entries of their known parent directory only — no recursion into `node_modules` or anywhere else.
+- **Stable ordering.** Top-level `repos` is sorted by name. Each `agent_docs` array preserves the order of `[agents].selected`. Each agent's `files` is sorted by path.
+- **Exit codes.** `0` success (including success-with-warnings); `2` for clap usage errors or non-TTY without `[agents]`; `3` for unknown workspace / repo name. `5` is not produced.
 
 ### Filtering by workspace
 

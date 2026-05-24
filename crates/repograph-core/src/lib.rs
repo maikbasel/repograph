@@ -6,6 +6,7 @@
 
 pub mod agents;
 pub mod config;
+pub mod context;
 pub mod error;
 pub mod git;
 
@@ -13,6 +14,9 @@ pub use agents::AgentId;
 pub use config::{
     Agents, CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo,
     Settings, Workspace, WorkspaceResolution, validate_workspace_name,
+};
+pub use context::{
+    AgentDoc, Context, MatchedFile, RepoContext, SCHEMA_VERSION, Scope, resolve_agent_docs,
 };
 pub use error::RepographError;
 pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};
