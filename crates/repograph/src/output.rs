@@ -3,11 +3,14 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-use comfy_table::{Cell, Table, presets::UTF8_FULL};
+use comfy_table::{Cell, Color, Table, presets::UTF8_FULL};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use rayon::prelude::*;
-use repograph_core::{Context, Repo, RepoContext, RepoStatus, RepographError, Scope, Workspace};
+use repograph_core::{
+    Check, Context, DoctorReport, Repo, RepoContext, RepoStatus, RepographError, Scope, Severity,
+    Workspace,
+};
 use serde::Serialize;
 
 /// Decided once at command entry; passed down so renderers never re-check.
@@ -343,10 +346,7 @@ pub fn render_context(mode: OutputMode, context: &Context) -> Result<(), Repogra
 /// and (deliberately) NO trailing newline so a `--json` invocation pipes
 /// cleanly into a JSON-aware consumer that doesn't tolerate trailing
 /// whitespace.
-fn render_context_json<W: Write>(
-    context: &Context,
-    writer: &mut W,
-) -> Result<(), RepographError> {
+fn render_context_json<W: Write>(context: &Context, writer: &mut W) -> Result<(), RepographError> {
     serde_json::to_writer(&mut *writer, context).map_err(serde_json_to_repograph)?;
     Ok(())
 }
@@ -425,11 +425,7 @@ fn render_repo_markdown<W: Write>(
                 .path
                 .to_string_lossy()
                 .replace(std::path::MAIN_SEPARATOR, "/");
-            writeln!(
-                writer,
-                "#### {path_str} ({})",
-                human_size(file.bytes)
-            )?;
+            writeln!(writer, "#### {path_str} ({})", human_size(file.bytes))?;
             writeln!(writer)?;
             let fence = pick_fence(&file.content);
             writeln!(writer, "{fence}")?;
@@ -448,7 +444,10 @@ fn render_repo_markdown<W: Write>(
 /// triple-backtick; falls back to triple-tilde when the content contains a
 /// triple-backtick line (e.g. CLAUDE.md files that embed Markdown samples).
 fn pick_fence(content: &str) -> &'static str {
-    if content.lines().any(|line| line.trim_start().starts_with("```")) {
+    if content
+        .lines()
+        .any(|line| line.trim_start().starts_with("```"))
+    {
         "~~~"
     } else {
         "```"
@@ -513,6 +512,84 @@ where
             drop(progress);
             results
         }
+    }
+}
+
+/// Render a [`DoctorReport`] to stdout. JSON mode emits a single-line
+/// envelope (no trailing newline); TTY mode emits a `comfy-table` summary
+/// followed by a `<N> ok · <M> warn · <K> error` footer with severity
+/// colouring.
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when writing to stdout fails.
+pub fn render_doctor(mode: OutputMode, report: &DoctorReport) -> Result<(), RepographError> {
+    match mode {
+        OutputMode::Json => render_doctor_json(report, &mut io::stdout().lock()),
+        OutputMode::Tty => render_doctor_table(report, &mut io::stdout().lock()),
+    }
+}
+
+fn render_doctor_json<W: Write>(
+    report: &DoctorReport,
+    writer: &mut W,
+) -> Result<(), RepographError> {
+    serde_json::to_writer(&mut *writer, report).map_err(serde_json_to_repograph)?;
+    Ok(())
+}
+
+fn render_doctor_table<W: Write>(
+    report: &DoctorReport,
+    writer: &mut W,
+) -> Result<(), RepographError> {
+    let mut table = Table::new();
+    table.load_preset(UTF8_FULL);
+    table.set_header(vec!["Severity", "Check", "Target", "Message"]);
+    for f in &report.checks {
+        table.add_row(vec![
+            Cell::new(severity_label(f.severity)).fg(severity_colour(f.severity)),
+            Cell::new(check_label(f.check)),
+            Cell::new(&f.target),
+            Cell::new(&f.message),
+        ]);
+    }
+    writeln!(writer, "{table}")?;
+    writeln!(
+        writer,
+        "{ok} ok · {warn} warn · {error} error",
+        ok = report.summary.ok,
+        warn = report.summary.warn,
+        error = report.summary.error,
+    )?;
+    Ok(())
+}
+
+const fn severity_label(s: Severity) -> &'static str {
+    match s {
+        Severity::Ok => "ok",
+        Severity::Warn => "warn",
+        Severity::Error => "error",
+    }
+}
+
+const fn severity_colour(s: Severity) -> Color {
+    match s {
+        Severity::Ok => Color::Green,
+        Severity::Warn => Color::Yellow,
+        Severity::Error => Color::Red,
+    }
+}
+
+const fn check_label(c: Check) -> &'static str {
+    match c {
+        Check::ConfigPresent => "ConfigPresent",
+        Check::ConfigParse => "ConfigParse",
+        Check::AgentsConfigured => "AgentsConfigured",
+        Check::ProjectsRootExists => "ProjectsRootExists",
+        Check::RepoPathExists => "RepoPathExists",
+        Check::RepoIsGitRepo => "RepoIsGitRepo",
+        Check::WorkspaceMembersResolve => "WorkspaceMembersResolve",
+        Check::AgentDocPresent => "AgentDocPresent",
     }
 }
 

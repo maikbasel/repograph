@@ -320,8 +320,7 @@ fn run_fetch(repo: &git2::Repository, branch: &str) -> Result<(), String> {
             let user = username_from_url.unwrap_or("git");
             return git2::Cred::ssh_key_from_agent(user);
         }
-        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) && !tried_cred_helper
-        {
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) && !tried_cred_helper {
             tried_cred_helper = true;
             // Open default git config (~/.gitconfig + system) so the user's
             // credential.helper setting (Keychain, libsecret, manager-core,

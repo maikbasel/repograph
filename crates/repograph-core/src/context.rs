@@ -170,10 +170,7 @@ fn read_branch(repo_path: &Path) -> (Option<String>, Option<String>) {
         Ok(head) if head.is_branch() => (head.shorthand().map(ToString::to_string), None),
         Ok(_) => (None, None), // detached
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => (None, None),
-        Err(e) => (
-            None,
-            Some(format!("could not read HEAD: {}", e.message())),
-        ),
+        Err(e) => (None, Some(format!("could not read HEAD: {}", e.message()))),
     }
 }
 
@@ -194,10 +191,7 @@ fn read_branch(repo_path: &Path) -> (Option<String>, Option<String>) {
 /// Files are deduplicated within a single agent's `files` by relative path
 /// and sorted ascending for stable output.
 #[must_use]
-pub fn resolve_agent_docs(
-    repo_root: &Path,
-    agents: &[AgentId],
-) -> (Vec<AgentDoc>, Vec<String>) {
+pub fn resolve_agent_docs(repo_root: &Path, agents: &[AgentId]) -> (Vec<AgentDoc>, Vec<String>) {
     let mut docs = Vec::with_capacity(agents.len());
     let mut warnings = Vec::new();
 
@@ -246,10 +240,7 @@ enum PatternKind {
     /// A glob pattern whose parent directory is known and fixed. Carries the
     /// parent path (relative to the repo root) and the glob to match against
     /// the parent's direct children.
-    Glob {
-        parent: PathBuf,
-        pattern: String,
-    },
+    Glob { parent: PathBuf, pattern: String },
 }
 
 fn classify_pattern(pattern: &'static str) -> PatternKind {
@@ -283,10 +274,7 @@ fn expand_glob(
         Ok(it) => it,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
-            warnings.push(format!(
-                "could not list {}: {e}",
-                display_rel(parent_rel)
-            ));
+            warnings.push(format!("could not list {}: {e}", display_rel(parent_rel)));
             return;
         }
     };
@@ -609,11 +597,7 @@ mod tests {
         std::fs::write(repo.join("CLAUDE.md"), "c").unwrap();
         std::fs::write(repo.join("AGENTS.md"), "a").unwrap();
 
-        let rc = RepoContext::build_one(
-            "r",
-            &repo,
-            &[AgentId::AgentsMd, AgentId::ClaudeCode],
-        );
+        let rc = RepoContext::build_one("r", &repo, &[AgentId::AgentsMd, AgentId::ClaudeCode]);
         assert_eq!(rc.agent_docs[0].agent, AgentId::AgentsMd);
         assert_eq!(rc.agent_docs[1].agent, AgentId::ClaudeCode);
     }
@@ -629,13 +613,19 @@ mod tests {
             name: "team".into(),
         })
         .unwrap();
-        assert_eq!(s, serde_json::json!({ "kind": "workspace", "name": "team" }));
+        assert_eq!(
+            s,
+            serde_json::json!({ "kind": "workspace", "name": "team" })
+        );
 
         let s = serde_json::to_value(Scope::Repos {
             repos: vec!["a".into(), "b".into()],
         })
         .unwrap();
-        assert_eq!(s, serde_json::json!({ "kind": "repos", "repos": ["a", "b"] }));
+        assert_eq!(
+            s,
+            serde_json::json!({ "kind": "repos", "repos": ["a", "b"] })
+        );
     }
 
     #[test]

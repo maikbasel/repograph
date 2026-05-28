@@ -91,7 +91,10 @@ fn default_scope_json_includes_every_registered_repo() {
     assert_eq!(repos[0]["name"], "api");
     assert_eq!(repos[1]["name"], "ui");
     assert_eq!(repos[0]["agent_docs"][0]["files"][0]["path"], "CLAUDE.md");
-    assert_eq!(repos[0]["agent_docs"][0]["files"][0]["content"], "api ctx\n");
+    assert_eq!(
+        repos[0]["agent_docs"][0]["files"][0]["content"],
+        "api ctx\n"
+    );
     assert_eq!(repos[1]["agent_docs"][0]["files"][0]["content"], "ui ctx\n");
     assert!(v["warnings"].is_array() && v["warnings"].as_array().unwrap().is_empty());
 }
@@ -129,10 +132,7 @@ fn workspace_scope_filters_to_members_only() {
     assert_eq!(v["scope"]["name"], "backend");
     let repos = v["repos"].as_array().unwrap();
     assert_eq!(repos.len(), 2);
-    let names: Vec<&str> = repos
-        .iter()
-        .map(|r| r["name"].as_str().unwrap())
-        .collect();
+    let names: Vec<&str> = repos.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert_eq!(names, vec!["api", "lib"]);
 }
 
@@ -415,12 +415,9 @@ fn non_tty_without_json_flag_emits_json() {
     init_agents(&config_dir, "claude-code");
     register(&config_dir, &repo, "r");
 
-    let out = repograph_cmd(&config_dir)
-        .arg("context")
-        .assert()
-        .success();
-    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout)
-        .expect("non-TTY default is JSON");
+    let out = repograph_cmd(&config_dir).arg("context").assert().success();
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.get_output().stdout).expect("non-TTY default is JSON");
     assert_eq!(v["schema_version"], 1);
 }
 

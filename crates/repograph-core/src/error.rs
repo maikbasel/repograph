@@ -63,6 +63,15 @@ pub enum RepographError {
     /// a TTY; pass `--no-prompt --agents <list>` …").
     #[error("{0}")]
     NeedsInit(String),
+
+    /// `repograph doctor` found one or more error-severity findings. The
+    /// report is the success output (already written to stdout); this variant
+    /// only carries the exit-code signal. Maps to exit code `1`. The binary
+    /// special-cases this variant to suppress the generic "repograph failed"
+    /// `tracing::error!` line, since the report itself is the user-facing
+    /// surface, not the error message.
+    #[error("doctor found {count} error finding(s) — see report above")]
+    DoctorErrorsFound { count: u32 },
 }
 
 impl RepographError {
@@ -76,7 +85,11 @@ impl RepographError {
             Self::GitOpen { .. } | Self::NotFound { .. } => 3,
             Self::Conflict { .. } => 5,
             Self::InvalidName { .. } | Self::NeedsInit { .. } => 2,
-            Self::Io(_) | Self::ConfigParse(_) | Self::ConfigWrite(_) | Self::UsageError(_) => 1,
+            Self::Io(_)
+            | Self::ConfigParse(_)
+            | Self::ConfigWrite(_)
+            | Self::UsageError(_)
+            | Self::DoctorErrorsFound { .. } => 1,
         }
     }
 }

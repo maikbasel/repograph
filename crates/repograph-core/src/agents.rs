@@ -187,11 +187,7 @@ mod tests {
 
     #[test]
     fn serde_round_trip_through_toml_value() {
-        let original = vec![
-            AgentId::ClaudeCode,
-            AgentId::Cursor,
-            AgentId::AgentsMd,
-        ];
+        let original = vec![AgentId::ClaudeCode, AgentId::Cursor, AgentId::AgentsMd];
         let serialized = toml::to_string(&toml::Table::from_iter([(
             "selected".to_string(),
             toml::Value::try_from(&original).unwrap(),

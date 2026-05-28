@@ -7,6 +7,7 @@
 pub mod agents;
 pub mod config;
 pub mod context;
+pub mod doctor;
 pub mod error;
 pub mod git;
 
@@ -18,6 +19,7 @@ pub use config::{
 pub use context::{
     AgentDoc, Context, MatchedFile, RepoContext, SCHEMA_VERSION, Scope, resolve_agent_docs,
 };
+pub use doctor::{Check, DOCTOR_SCHEMA_VERSION, DoctorReport, Finding, Severity, Summary};
 pub use error::RepographError;
 pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};
 

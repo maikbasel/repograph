@@ -42,18 +42,13 @@ pub fn effective_projects_root(config: &Config) -> Option<PathBuf> {
 
 /// Same precedence as [`effective_projects_root`] but with the env value
 /// injected. Exists so tests don't have to mutate process-wide env.
-fn resolve_projects_root(
-    config: &Config,
-    env: Option<std::ffi::OsString>,
-) -> Option<PathBuf> {
+fn resolve_projects_root(config: &Config, env: Option<std::ffi::OsString>) -> Option<PathBuf> {
     if let Some(env) = env
         && !env.is_empty()
     {
         return Some(PathBuf::from(env));
     }
-    config
-        .settings()
-        .and_then(|s| s.projects_root.clone())
+    config.settings().and_then(|s| s.projects_root.clone())
 }
 
 /// Filesystem-aware path suggestions for the repo-path input in
@@ -491,10 +486,7 @@ mod tests {
             !result.iter().any(|s| s.ends_with("/apex/")),
             "prefix `al` excludes `apex`: {result:?}"
         );
-        assert!(
-            !result.iter().any(|s| s.ends_with("/beta/")),
-            "{result:?}"
-        );
+        assert!(!result.iter().any(|s| s.ends_with("/beta/")), "{result:?}");
     }
 
     #[test]

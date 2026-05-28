@@ -142,7 +142,9 @@ fn run_first_run(
     }
 
     let selected = select_agents_interactively(&preselected)?;
-    config.set_agents(Some(Agents { selected: selected.clone() }));
+    config.set_agents(Some(Agents {
+        selected: selected.clone(),
+    }));
     config.save(config_dir)?;
 
     // One-time project-root setup. Stored persistently so future repo
@@ -159,10 +161,7 @@ fn run_first_run(
 /// First-run step asking "Where do you keep your projects?" and persisting
 /// the answer to `[settings] projects_root`. Skip-able. No-ops when the
 /// effective value is already known (env var or pre-existing config).
-fn pick_projects_root_step(
-    config: &mut Config,
-    config_dir: &Path,
-) -> Result<(), RepographError> {
+fn pick_projects_root_step(config: &mut Config, config_dir: &Path) -> Result<(), RepographError> {
     if effective_projects_root(config).is_some() {
         return Ok(());
     }
@@ -272,11 +271,7 @@ fn run_settings_panel(config: &mut Config, config_dir: &Path) -> Result<(), Repo
     loop {
         let action: SettingsAction = cliclack::select("What would you like to do?")
             .item(SettingsAction::UpdateAgents, "Update agent selection", "")
-            .item(
-                SettingsAction::ChangeProjectRoot,
-                "Change project root",
-                "",
-            )
+            .item(SettingsAction::ChangeProjectRoot, "Change project root", "")
             .item(SettingsAction::AddRepo, "Register another repo", "")
             .item(SettingsAction::ManageWorkspaces, "Manage workspaces", "")
             .item(SettingsAction::Reset, "Reset everything", "destructive")
@@ -320,10 +315,11 @@ fn run_settings_panel(config: &mut Config, config_dir: &Path) -> Result<(), Repo
                 manage_workspaces(config, config_dir)?;
             }
             SettingsAction::Reset => {
-                let confirm = cliclack::confirm("Reset everything? This deletes all configuration.")
-                    .initial_value(false)
-                    .interact()
-                    .map_err(RepographError::Io)?;
+                let confirm =
+                    cliclack::confirm("Reset everything? This deletes all configuration.")
+                        .initial_value(false)
+                        .interact()
+                        .map_err(RepographError::Io)?;
                 if confirm {
                     *config = Config::default();
                     config.save(config_dir)?;

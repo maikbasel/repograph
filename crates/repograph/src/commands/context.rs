@@ -155,14 +155,13 @@ fn resolve_targets(config: &Config, scope: &Scope) -> Result<Vec<Target>, Repogr
                 if !seen.insert(name.clone()) {
                     continue;
                 }
-                let repo =
-                    config
-                        .repos()
-                        .get(name)
-                        .ok_or_else(|| RepographError::NotFound {
-                            kind: "repo",
-                            name: name.clone(),
-                        })?;
+                let repo = config
+                    .repos()
+                    .get(name)
+                    .ok_or_else(|| RepographError::NotFound {
+                        kind: "repo",
+                        name: name.clone(),
+                    })?;
                 targets.push(Target {
                     name: name.clone(),
                     path: repo.path.clone(),

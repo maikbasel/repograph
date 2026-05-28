@@ -11,11 +11,14 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | Command | Purpose |
 |---------|---------|
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
+| `repograph completions <shell>` | Emit a static completion script for `bash`, `zsh`, `fish`, `powershell`, or `elvish` on stdout. Generated against the live `Cli` so the script never drifts from the actual command surface. |
 | `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
+| `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
 | `repograph init` | Interactive setup — pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; optionally add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
 | `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
+| `repograph switch <name>` | Emit `cd <path>` for the named registered repo on stdout, shell-eval-safe (single-quoted when the path contains whitespace or shell metacharacters). Pair with the `rg-cd` shell function below. |
 | `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
 | `repograph workspace rm <name>` | Delete a workspace. Registered repos are not touched. |
 | `repograph workspace ls [--json]` | List the registered workspaces with name, description, and member count. |
@@ -244,6 +247,92 @@ Behavior contract:
 - **Bounded filesystem walk.** Flat patterns (`CLAUDE.md`) are existence-checked; glob patterns (`.cursor/rules/*.md`) are matched against the entries of their known parent directory only — no recursion into `node_modules` or anywhere else.
 - **Stable ordering.** Top-level `repos` is sorted by name. Each `agent_docs` array preserves the order of `[agents].selected`. Each agent's `files` is sorted by path.
 - **Exit codes.** `0` success (including success-with-warnings); `2` for clap usage errors or non-TTY without `[agents]`; `3` for unknown workspace / repo name. `5` is not produced.
+
+### Shell integration
+
+`repograph switch <name>` writes exactly `cd <path>` (and nothing else) to stdout. Wrap it in a one-line shell function so a single command teleports between registered repos:
+
+```bash
+# bash / zsh — add to ~/.bashrc or ~/.zshrc
+rg-cd() { eval "$(repograph switch "$1")"; }
+```
+
+```fish
+# fish — add to ~/.config/fish/config.fish
+function rg-cd
+    eval (repograph switch $argv[1])
+end
+```
+
+Then `rg-cd api` jumps to the registered repo `api`. Unknown names exit `3` with a `did you mean: …` hint on stderr when there's a near-miss.
+
+`switch` does **not** validate that the path still resolves — that's `repograph doctor`'s job, and the user's shell surfaces a missing-dir `cd` error directly. Use `repograph doctor` when something looks drifty.
+
+One-time install of completions per shell (regenerate after upgrading `repograph`):
+
+```bash
+# bash (per-user)
+repograph completions bash > ~/.local/share/bash-completion/completions/repograph
+# zsh (assumes the first fpath entry is user-writable)
+repograph completions zsh > "${fpath[1]}/_repograph"
+# fish
+repograph completions fish > ~/.config/fish/completions/repograph.fish
+# powershell (per-session — append to $PROFILE for persistence)
+repograph completions powershell | Out-String | Invoke-Expression
+# elvish (then `use repograph` in rc.elv)
+repograph completions elvish > ~/.config/elvish/lib/repograph.elv
+```
+
+Completions are generated against the live `Cli` struct, so they always match the subcommands and flags the binary actually exposes.
+
+### Doctor
+
+`repograph doctor` runs a read-only catalog of checks against the on-disk config and every registered repo. Findings are coloured rows in a `comfy-table` when stdout is a TTY; a `schema_version: 1` JSON envelope when piped or `--json`.
+
+| Check                     | What it verifies                                                                  | Severity on fail |
+|---------------------------|-----------------------------------------------------------------------------------|------------------|
+| `ConfigPresent`           | Config file exists at the resolved config dir.                                    | `error`          |
+| `ConfigParse`             | Config file parses as TOML. Only run when `ConfigPresent` passed.                 | `error`          |
+| `AgentsConfigured`        | `[agents]` section is present in the config.                                      | `warn`           |
+| `ProjectsRootExists`      | `[settings].projects_root`, if set, points at an existing directory.              | `warn`           |
+| `RepoPathExists`          | Per repo: the registered path exists on disk.                                     | `error`          |
+| `RepoIsGitRepo`           | Per repo: the path opens as a git repository (gated by `RepoPathExists`).         | `error`          |
+| `WorkspaceMembersResolve` | Per workspace member: the member name resolves to a registered repo.              | `warn`           |
+| `AgentDocPresent`         | Per repo × per selected agent: at least one file matches the pattern set.         | `warn`           |
+
+Every check that passes emits an `ok` finding too — you can audit *which* checks ran against *which* targets without consulting the catalog separately.
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-24T14:23:11Z",
+  "checks": [
+    {
+      "check": "RepoPathExists",
+      "severity": "error",
+      "target": "api",
+      "message": "path does not exist: /home/user/code/api"
+    },
+    {
+      "check": "AgentDocPresent",
+      "severity": "warn",
+      "target": "ui / claude-code",
+      "message": "no files matched claude-code patterns (CLAUDE.md)"
+    }
+  ],
+  "summary": { "ok": 12, "warn": 1, "error": 1, "total": 14 }
+}
+```
+
+The actual stdout is single-line for clean piping into `jq`. The `checks` array is sorted by `(severity DESC, check ASC, target ASC)` — most pressing first, stable order across runs.
+
+Exit codes:
+
+- `0` — every finding is `ok` or `warn` (warnings do not gate; safe to wire into a `precmd` shell hook).
+- `1` — at least one `error` finding. Also returned when the config file is missing — the report is still emitted so you can see what failed.
+- `4` — the config file exists but cannot be read (permission denied). No report is emitted; the standard error path takes over.
+
+`doctor` is read-only and zero-network — no config writes, no `git fetch`.
 
 ### Filtering by workspace
 
