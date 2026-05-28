@@ -15,11 +15,17 @@ use tempfile::TempDir;
 use crate::common::{fixture_git_repo, repograph_cmd};
 
 fn init_agents(config_dir: &Path, agents: &str) {
+    let cwd = config_dir
+        .parent()
+        .expect("config_dir always lives under a tempdir");
     repograph_cmd(config_dir)
+        .current_dir(cwd)
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg(agents)
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 }

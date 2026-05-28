@@ -88,10 +88,35 @@ Inside "Manage workspaces", **Create** asks for a name and then offers an immedi
 Non-interactive (CI, dotfiles, non-TTY):
 
 ```bash
-$ repograph init --no-prompt --agents claude-code,cursor
+$ repograph init --no-prompt --agents claude-code,cursor --scope user
 ```
 
 `--no-prompt` requires `--agents`. The empty string `--agents ""` is valid and writes `selected = []`.
+
+#### `--scope <user|project>`
+
+Where to install per-agent artifacts (see "Per-agent artifact installation" below). Defaults to `user` when omitted in an interactive run. Required under `--no-prompt` when any selected agent has a meaningful scope choice (today: `claude-code`, `windsurf`); project-only agents (`agents-md`, `aider`, `cursor`) silently fall through to the project path regardless of this flag.
+
+#### `--force`
+
+Overwrite existing artifacts even outside the managed delimiter block. Without this flag, repograph rewrites only the delimited region of pre-existing files (preserving user-authored content above and below); with it, the file is replaced fresh. Use this to re-assert the canonical body after local edits drift, or to remove user content that has accumulated above the managed block.
+
+#### Per-agent artifact installation
+
+`repograph init` writes a native instruction file for each selected agent so the agent's runtime picks it up automatically and learns when to invoke `repograph`. The path matrix is fixed by each agent's convention:
+
+| Agent ID      | User-scope path                                       | Project-scope path                     |
+|---------------|-------------------------------------------------------|----------------------------------------|
+| `claude-code` | `~/.claude/skills/repograph/SKILL.md`                 | `<cwd>/.claude/skills/repograph/SKILL.md` |
+| `agents-md`   | (project-only)                                        | `<cwd>/AGENTS.md`                      |
+| `cursor`      | (project-only)                                        | `<cwd>/.cursor/rules/repograph.mdc`    |
+| `aider`       | (project-only)                                        | `<cwd>/CONVENTIONS.md`                 |
+| `windsurf`    | `~/.codeium/windsurf/memories/repograph.md`           | `<cwd>/.windsurfrules`                 |
+| `copilot`     | (deferred — no v1 writer)                             | (deferred — no v1 writer)              |
+
+Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a delimiter pair (`<!-- repograph:begin --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs. Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one agent does not abort the others — the agent-selection persistence already succeeded.
+
+Selecting `copilot` is valid but writes no file in v1; the agent's instruction format varies across surfaces (repo-level, editor-level, Copilot Workspace) and no single converged path covers them yet.
 
 ### Agent registry
 
@@ -348,7 +373,7 @@ Restricts the registry listing to live members of `acme`. Dangling members are s
 |------|---------|
 | 0 | Success |
 | 1 | General failure (malformed config, runtime usage error) |
-| 2 | CLI argument error (clap usage); also: `repograph init` in non-TTY without `--no-prompt --agents`, and (in future commands) agents-not-configured in non-TTY |
+| 2 | CLI argument error (clap usage); also: `repograph init` in non-TTY without `--no-prompt --agents`; `--no-prompt` with a scope-bearing agent (`claude-code`, `windsurf`) and no `--scope`; agents-not-configured in non-TTY for agent-consuming commands |
 | 3 | Resource not found (path is not a git repo, name not registered) |
 | 4 | Permission denied (cannot read or write the config file) |
 | 5 | Conflict (name or path already registered) |
@@ -391,7 +416,7 @@ crates/
 └── repograph/        # CLI binary, depends on repograph-core
 ```
 
-The library is published separately (`cargo add repograph-core`) so future tools — including a planned MCP server — can share the same domain logic without going through the CLI.
+The library is published separately (`cargo add repograph-core`) so future tools — alternate front-ends, editor plugins, or batch utilities — can share the same domain logic without going through the CLI. Agent integration ships as native per-agent instruction files written by `repograph init` (see "Per-agent artifact installation" above), not as a separate MCP binary.
 
 ## Development
 

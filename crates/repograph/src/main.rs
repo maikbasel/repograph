@@ -141,9 +141,9 @@ mod tests {
     }
 
     #[test]
-    fn no_override_no_default_returns_usage_error_exit_1() {
+    fn no_override_no_default_returns_usage_error_exit_2() {
         let err = resolve_config_dir(None, None).unwrap_err();
-        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.exit_code(), 2);
         let msg = err.to_string();
         assert!(
             msg.contains("--config-dir"),

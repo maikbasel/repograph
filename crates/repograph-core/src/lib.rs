@@ -4,6 +4,7 @@
 //! terminal I/O — the binary crate (and a future MCP server) depend on this
 //! crate to keep their concerns separate.
 
+pub mod agent_artifact;
 pub mod agents;
 pub mod config;
 pub mod context;
@@ -11,6 +12,11 @@ pub mod doctor;
 pub mod error;
 pub mod git;
 
+pub use agent_artifact::{
+    ArtifactResult, BODY as AGENT_ARTIFACT_BODY, DELIMITER_BEGIN, DELIMITER_END,
+    REASON_COPILOT_DEFERRED, SUMMARY as AGENT_ARTIFACT_SUMMARY, has_artifact_writer,
+    install_artifacts, install_one, render_artifact, resolve_path, scope_is_meaningful,
+};
 pub use agents::AgentId;
 pub use config::{
     Agents, CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo,

@@ -14,15 +14,27 @@ use tempfile::TempDir;
 
 use crate::common::{fixture_git_repo, repograph_cmd};
 
-/// Run `repograph init --no-prompt --agents <list>` against `config_dir` so
-/// subsequent `context` invocations have `[agents]` configured without
-/// touching the cliclack flow.
+/// Run `repograph init --no-prompt --agents <list> --scope project` against
+/// `config_dir` so subsequent `context` invocations have `[agents]`
+/// configured without touching the cliclack flow.
+///
+/// `--scope project` is required because the `agent-skills` change made
+/// `--scope` mandatory under `--no-prompt` when a selected agent has a
+/// meaningful scope choice (claude-code, windsurf). We pin to `project` so
+/// any per-agent artifacts written during init land in `config_dir.parent()`
+/// (the test's tempdir) and get cleaned up automatically.
 fn init_agents(config_dir: &Path, agents: &str) {
+    let cwd = config_dir
+        .parent()
+        .expect("config_dir always lives under a tempdir");
     repograph_cmd(config_dir)
+        .current_dir(cwd)
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg(agents)
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 }

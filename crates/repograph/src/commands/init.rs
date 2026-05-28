@@ -20,13 +20,16 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use repograph_core::agent_artifact::{
+    self, ArtifactResult, has_artifact_writer, install_artifacts, scope_is_meaningful,
+};
 use repograph_core::{
     AgentId, Agents, Config, Repo, RepographError, validate_git_repo, validate_workspace_name,
 };
 
 use crate::prompt::{
     PROJECT_ROOT_ENV, detect_agents, discover_project_roots, effective_projects_root, host_home,
-    path_suggestions, scan_git_repos, select_agents_interactively, stdout_is_tty,
+    path_suggestions, prompt_scope, scan_git_repos, select_agents_interactively, stdout_is_tty,
 };
 
 #[derive(Debug, Parser)]
@@ -42,6 +45,33 @@ pub struct Args {
     /// dotfile bootstrapping, and non-TTY contexts.
     #[arg(long, requires = "agents")]
     pub no_prompt: bool,
+
+    /// Where to install agent artifacts. Defaults to `user` when omitted;
+    /// required under `--no-prompt` when any selected agent has a meaningful
+    /// scope choice (i.e. its user and project paths differ — today that's
+    /// `claude-code` and `windsurf`). Project-only agents silently use the
+    /// project path regardless of this flag.
+    #[arg(long, value_parser = parse_scope, value_name = "SCOPE")]
+    pub scope: Option<agent_artifact::Scope>,
+
+    /// Overwrite existing artifacts even outside the managed delimiter block.
+    /// Without this flag, repograph rewrites only the delimited region of
+    /// pre-existing files (preserving user content); with it, the file is
+    /// replaced fresh.
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// Parse the `--scope` CLI value. Mirrors `Scope`'s serde lowercase rendering
+/// so the user-facing surface is the same on the wire and on the command line.
+fn parse_scope(s: &str) -> Result<agent_artifact::Scope, String> {
+    match s {
+        "user" => Ok(agent_artifact::Scope::User),
+        "project" => Ok(agent_artifact::Scope::Project),
+        other => Err(format!(
+            "invalid scope '{other}', expected `user` or `project`"
+        )),
+    }
 }
 
 /// Entry point dispatched from `main.rs`.
@@ -53,6 +83,8 @@ pub struct Args {
 #[tracing::instrument(skip(args, config_dir), fields(
     no_prompt = args.no_prompt,
     agents_flag = args.agents.as_deref().unwrap_or("<none>"),
+    scope = ?args.scope,
+    force = args.force,
     config_dir = %config_dir.display(),
 ))]
 pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
@@ -76,12 +108,122 @@ pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
     }
 
     if config.agents().is_some() {
-        run_settings_panel(&mut config, config_dir)?;
+        run_settings_panel(args, &mut config, config_dir)?;
     } else {
         run_first_run(args, &mut config, config_dir)?;
     }
     tracing::info!("init: completed (interactive)");
     Ok(())
+}
+
+/// Does the selection contain at least one agent for which `Scope::User` and
+/// `Scope::Project` resolve to different paths? If yes, `--scope` must be
+/// explicit under `--no-prompt`.
+fn requires_scope(selected: &[AgentId]) -> bool {
+    selected
+        .iter()
+        .any(|&a| has_artifact_writer(a) && scope_is_meaningful(a))
+}
+
+/// Comma-joined `as_str()` form of the agents in `selected` for which
+/// `scope_is_meaningful` is true. Used to name the offending agents in the
+/// `--no-prompt`/`--scope` validation error.
+fn scope_bearing_names(selected: &[AgentId]) -> String {
+    selected
+        .iter()
+        .filter(|&&a| has_artifact_writer(a) && scope_is_meaningful(a))
+        .map(AgentId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Resolve the install scope for an interactive run. If the user passed
+/// `--scope` on the command line, use that. Otherwise, if at least one
+/// selected agent has a meaningful scope choice, prompt; if not, default to
+/// `User` (which falls through to project for project-only agents anyway).
+fn resolve_scope_interactive(
+    args: &Args,
+    selected: &[AgentId],
+) -> Result<agent_artifact::Scope, RepographError> {
+    if let Some(s) = args.scope {
+        return Ok(s);
+    }
+    if !requires_scope(selected) {
+        return Ok(agent_artifact::Scope::User);
+    }
+    let home = host_home().unwrap_or_else(|| PathBuf::from("~"));
+    let cwd = std::env::current_dir().map_err(RepographError::Io)?;
+    prompt_scope(&home, &cwd)
+}
+
+/// Install per-agent artifacts for `selected` and log per-result outcomes on
+/// stderr. No-op if no agent in the selection has a writer.
+///
+/// Returns `Err` only for failures that prevent the install from running at
+/// all (e.g. `current_dir()` failed, or `--scope user` was chosen but the
+/// host has no home directory). Per-agent install failures are captured as
+/// [`ArtifactResult::Failed`] and surfaced via `warn!`; they do NOT abort the
+/// command's exit code.
+fn run_install(
+    selected: &[AgentId],
+    scope: agent_artifact::Scope,
+    force: bool,
+) -> Result<(), RepographError> {
+    if !selected.iter().any(|&a| has_artifact_writer(a)) {
+        return Ok(());
+    }
+    let cwd = std::env::current_dir().map_err(RepographError::Io)?;
+    let home = match host_home() {
+        Some(h) => h,
+        None if scope == agent_artifact::Scope::Project => cwd.clone(),
+        None => {
+            return Err(RepographError::UsageError(
+                "could not determine home directory for `--scope user`; \
+                 pass `--scope project` or set `HOME` in the environment"
+                    .into(),
+            ));
+        }
+    };
+    let results = install_artifacts(selected, scope, &home, &cwd, force);
+    log_install_results(&results);
+    Ok(())
+}
+
+/// Emit one `tracing` line per install result on stderr per the logging
+/// contract. `Failed` results use `warn!`; everything else `info!`.
+fn log_install_results(results: &[ArtifactResult]) {
+    for r in results {
+        match r {
+            ArtifactResult::Written { agent, path } => {
+                tracing::info!(
+                    agent = agent.as_str(),
+                    path = %path.display(),
+                    "artifact written",
+                );
+            }
+            ArtifactResult::Unchanged { agent, path } => {
+                tracing::info!(
+                    agent = agent.as_str(),
+                    path = %path.display(),
+                    "artifact unchanged",
+                );
+            }
+            ArtifactResult::Skipped { agent, reason } => {
+                tracing::info!(
+                    agent = agent.as_str(),
+                    reason = *reason,
+                    "artifact skipped",
+                );
+            }
+            ArtifactResult::Failed { agent, error } => {
+                tracing::warn!(
+                    agent = agent.as_str(),
+                    err = ?error,
+                    "artifact failed",
+                );
+            }
+        }
+    }
 }
 
 fn run_non_interactive(
@@ -94,8 +236,22 @@ fn run_non_interactive(
     // selection" (a valid configured-but-empty state).
     let list = args.agents.as_deref().unwrap_or("");
     let selected = parse_agent_list(list)?;
-    config.set_agents(Some(Agents { selected }));
+
+    if requires_scope(&selected) && args.scope.is_none() {
+        return Err(RepographError::UsageError(format!(
+            "--scope must be explicit under --no-prompt when selected agents include \
+             {names}; pass `--scope user` or `--scope project`",
+            names = scope_bearing_names(&selected),
+        )));
+    }
+
+    config.set_agents(Some(Agents {
+        selected: selected.clone(),
+    }));
     config.save(config_dir)?;
+
+    let scope = args.scope.unwrap_or(agent_artifact::Scope::User);
+    run_install(&selected, scope, args.force)?;
     Ok(())
 }
 
@@ -142,10 +298,16 @@ fn run_first_run(
     }
 
     let selected = select_agents_interactively(&preselected)?;
+    // Resolve install scope before the existing project-root flow so the user
+    // makes all the agent-related decisions up front.
+    let scope = resolve_scope_interactive(args, &selected)?;
+
     config.set_agents(Some(Agents {
         selected: selected.clone(),
     }));
     config.save(config_dir)?;
+
+    run_install(&selected, scope, args.force)?;
 
     // One-time project-root setup. Stored persistently so future repo
     // registrations and the future `context` command can use it.
@@ -243,7 +405,11 @@ fn ask_and_store_projects_root(
     Ok(())
 }
 
-fn run_settings_panel(config: &mut Config, config_dir: &Path) -> Result<(), RepographError> {
+fn run_settings_panel(
+    args: &Args,
+    config: &mut Config,
+    config_dir: &Path,
+) -> Result<(), RepographError> {
     cliclack::intro("repograph init").map_err(RepographError::Io)?;
     let current = config
         .agents()
@@ -289,10 +455,12 @@ fn run_settings_panel(config: &mut Config, config_dir: &Path) -> Result<(), Repo
                     .map(|a| a.selected.iter().copied().collect())
                     .unwrap_or_default();
                 let selected = select_agents_interactively(&current_set)?;
+                let scope = resolve_scope_interactive(args, &selected)?;
                 config.set_agents(Some(Agents {
                     selected: selected.clone(),
                 }));
                 config.save(config_dir)?;
+                run_install(&selected, scope, args.force)?;
                 cliclack::log::success(format!(
                     "agents updated → {}",
                     if selected.is_empty() {
@@ -982,5 +1150,43 @@ mod tests {
             .exit_code(),
             2
         );
+    }
+
+    #[test]
+    fn requires_scope_predicate_matches_matrix() {
+        assert!(requires_scope(&[AgentId::ClaudeCode]));
+        assert!(requires_scope(&[AgentId::Windsurf]));
+        assert!(requires_scope(&[AgentId::ClaudeCode, AgentId::AgentsMd]));
+        assert!(!requires_scope(&[AgentId::AgentsMd]));
+        assert!(!requires_scope(&[AgentId::Cursor]));
+        assert!(!requires_scope(&[AgentId::Aider]));
+        assert!(!requires_scope(&[AgentId::Copilot]));
+        assert!(!requires_scope(&[]));
+    }
+
+    #[test]
+    fn scope_bearing_names_lists_only_meaningful_agents() {
+        let names = scope_bearing_names(&[
+            AgentId::AgentsMd,
+            AgentId::ClaudeCode,
+            AgentId::Cursor,
+            AgentId::Windsurf,
+        ]);
+        assert!(names.contains("claude-code"));
+        assert!(names.contains("windsurf"));
+        assert!(!names.contains("agents-md"));
+        assert!(!names.contains("cursor"));
+    }
+
+    #[test]
+    fn parse_scope_accepts_user_and_project() {
+        assert_eq!(parse_scope("user").unwrap(), agent_artifact::Scope::User);
+        assert_eq!(
+            parse_scope("project").unwrap(),
+            agent_artifact::Scope::Project
+        );
+        assert!(parse_scope("bogus").is_err());
+        assert!(parse_scope("USER").is_err()); // case-sensitive
+        assert!(parse_scope("").is_err());
     }
 }

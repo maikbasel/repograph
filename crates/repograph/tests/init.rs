@@ -19,10 +19,13 @@ fn init_no_prompt_happy_path_writes_agents_section() {
     let config_dir = tmp.path().join("config");
 
     repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("claude-code,cursor")
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 
@@ -48,10 +51,13 @@ fn init_no_prompt_preserves_selection_order() {
     let config_dir = tmp.path().join("config");
 
     repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("cursor,claude-code")
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 
@@ -92,12 +98,17 @@ fn init_no_prompt_overwrite_preserves_repos_and_workspaces() {
         .assert()
         .success();
 
-    // Now run init in non-interactive mode.
+    // Now run init in non-interactive mode. `agents-md` is project-only, so
+    // `--scope` is not required by the validation; pinning to `project`
+    // anyway so the test is robust to future scope-defaulting changes.
     repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("agents-md")
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 
@@ -122,18 +133,24 @@ fn init_no_prompt_overwrite_replaces_previous_agents() {
     let config_dir = tmp.path().join("config");
 
     repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("claude-code")
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 
     repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("cursor")
+        .arg("--scope")
+        .arg("project")
         .assert()
         .success();
 
@@ -211,10 +228,13 @@ fn init_no_prompt_emits_nothing_to_stdout() {
     let config_dir = tmp.path().join("config");
 
     let output = repograph_cmd(&config_dir)
+        .current_dir(tmp.path())
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
         .arg("claude-code")
+        .arg("--scope")
+        .arg("project")
         .output()
         .unwrap();
 

@@ -132,7 +132,7 @@ cargo dist build   # local test of release artifacts
 
 **Architecture Patterns**:
 
-- The workspace splits cleanly along the presentation/logic boundary: `repograph-core` owns domain types and adapters (no clap, no terminal output, no `println!`); the `repograph` binary owns presentation (clap parsing, `OutputMode`, table/JSON rendering) and depends on `repograph-core`. A future `repograph-mcp` binary crate will sit alongside `repograph`, sharing the same core.
+- The workspace splits cleanly along the presentation/logic boundary: `repograph-core` owns domain types and adapters (no clap, no terminal output, no `println!`); the `repograph` binary owns presentation (clap parsing, `OutputMode`, table/JSON rendering) and depends on `repograph-core`. Agent integration ships as native per-agent instruction artifacts written by `repograph init` (see the `agent-skills` capability) — not via a separate binary.
 - Each subcommand lives in `crates/repograph/src/commands/<name>.rs` with an `Args` struct (clap derive) and a `run(args: Args) -> Result<(), RepographError>` function
 - Config model (`Config`, `Repo`, `Workspace`) lives in `crates/repograph-core/src/config.rs`, serialized via `serde` + `toml`
 - All git operations isolated in `crates/repograph-core/src/git.rs` — no `git2` imports outside the core crate

@@ -84,11 +84,10 @@ impl RepographError {
             Self::PermissionDenied { .. } => 4,
             Self::GitOpen { .. } | Self::NotFound { .. } => 3,
             Self::Conflict { .. } => 5,
-            Self::InvalidName { .. } | Self::NeedsInit { .. } => 2,
+            Self::InvalidName { .. } | Self::NeedsInit { .. } | Self::UsageError(_) => 2,
             Self::Io(_)
             | Self::ConfigParse(_)
             | Self::ConfigWrite(_)
-            | Self::UsageError(_)
             | Self::DoctorErrorsFound { .. } => 1,
         }
     }
@@ -147,9 +146,9 @@ mod tests {
     }
 
     #[test]
-    fn usage_error_maps_to_1() {
+    fn usage_error_maps_to_2() {
         let err = RepographError::UsageError("nope".into());
-        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.exit_code(), 2);
     }
 
     #[test]

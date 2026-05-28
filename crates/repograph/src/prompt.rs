@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use is_terminal::IsTerminal;
+use repograph_core::agent_artifact;
 use repograph_core::{AgentId, Agents, Config, RepographError};
 
 /// Environment variable name for overriding the user's project-root setting
@@ -293,6 +294,37 @@ pub fn select_agents_interactively(
 #[must_use]
 pub fn stdout_is_tty() -> bool {
     std::io::stdout().is_terminal()
+}
+
+/// Render a cliclack single-select asking the user where to install agent
+/// artifacts. Both options show the resolved path so the user picks the right
+/// one without guessing what `user` and `project` mean. Default is `User`.
+///
+/// Emits to stderr per the output contract.
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when cliclack cannot read from stdin (e.g.
+/// non-TTY context). Call sites SHOULD gate on [`stdout_is_tty`] before
+/// invoking.
+pub fn prompt_scope(
+    home: &Path,
+    cwd: &Path,
+) -> Result<agent_artifact::Scope, RepographError> {
+    cliclack::select::<agent_artifact::Scope>("Where should I install agent artifacts?")
+        .item(
+            agent_artifact::Scope::User,
+            format!("User ({})", home.display()),
+            "applies across every project",
+        )
+        .item(
+            agent_artifact::Scope::Project,
+            format!("Project ({})", cwd.display()),
+            "checked into this repo",
+        )
+        .initial_value(agent_artifact::Scope::User)
+        .interact()
+        .map_err(RepographError::Io)
 }
 
 /// Ensure `config.agents()` is `Some(_)` before the caller reads it. The
