@@ -341,8 +341,7 @@ pub fn splice_managed_section(existing: Option<&str>, new_block_body: &str) -> S
 
     // No delimiter pair: append the full block after a separating newline.
     let needs_sep = !existing.is_empty() && !existing.ends_with('\n');
-    let mut out =
-        String::with_capacity(existing.len() + full_block.len() + usize::from(needs_sep));
+    let mut out = String::with_capacity(existing.len() + full_block.len() + usize::from(needs_sep));
     out.push_str(existing);
     if !existing.is_empty() {
         if needs_sep {
@@ -532,7 +531,7 @@ pub fn install_artifacts(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use tempfile::TempDir;
 
@@ -858,7 +857,11 @@ mod tests {
                 ArtifactResult::Unchanged { .. } => (),
                 other => panic!("expected Unchanged on re-run, got {other:?}"),
             }
-            assert_eq!(read(&path), first, "file must be byte-stable across re-runs");
+            assert_eq!(
+                read(&path),
+                first,
+                "file must be byte-stable across re-runs"
+            );
         }
 
         #[test]
@@ -891,7 +894,10 @@ mod tests {
             }
             let after = read(&path);
             assert!(after.starts_with(DELIMITER_BEGIN), "force replaced content");
-            assert!(!after.contains("Custom prose."), "force dropped user content");
+            assert!(
+                !after.contains("Custom prose."),
+                "force dropped user content"
+            );
         }
 
         #[test]
@@ -998,8 +1004,9 @@ mod tests {
                     ArtifactResult::Written { .. } | ArtifactResult::Unchanged { .. }
                 ));
                 // Restore mode so TempDir can clean up.
-                let mut perms =
-                    fs_err::metadata(cwd.join("AGENTS.md")).unwrap().permissions();
+                let mut perms = fs_err::metadata(cwd.join("AGENTS.md"))
+                    .unwrap()
+                    .permissions();
                 perms.set_mode(0o755);
                 fs_err::set_permissions(cwd.join("AGENTS.md"), perms).unwrap();
             }

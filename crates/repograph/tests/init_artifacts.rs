@@ -193,7 +193,10 @@ fn copilot_selection_succeeds_with_no_artifact() {
         f.proj.join(".windsurfrules"),
         f.home.join(".codeium/windsurf/memories/repograph.md"),
     ] {
-        assert!(!p.exists(), "no artifact should exist for copilot, found {p:?}");
+        assert!(
+            !p.exists(),
+            "no artifact should exist for copilot, found {p:?}"
+        );
     }
 }
 
@@ -212,7 +215,10 @@ fn scope_bearing_agent_without_scope_under_no_prompt_exits_2() {
         "missing --scope for scope-bearing agent must exit 2"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("--scope"), "stderr names --scope:\n{stderr}");
+    assert!(
+        stderr.contains("--scope"),
+        "stderr names --scope:\n{stderr}"
+    );
     assert!(
         stderr.contains("claude-code"),
         "stderr names the offending agent:\n{stderr}",

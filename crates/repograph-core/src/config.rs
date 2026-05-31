@@ -440,7 +440,7 @@ fn map_io_to_perm(e: std::io::Error, path: &Path) -> RepographError {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use tempfile::TempDir;
 

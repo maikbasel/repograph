@@ -308,7 +308,7 @@ fn summary_totals_match_checks_length() {
     let warn = s["warn"].as_u64().unwrap();
     let err = s["error"].as_u64().unwrap();
     assert_eq!(total, ok + warn + err);
-    assert_eq!(total as usize, v["checks"].as_array().unwrap().len());
+    assert_eq!(total, v["checks"].as_array().unwrap().len() as u64);
 }
 
 #[test]

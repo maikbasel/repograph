@@ -209,11 +209,7 @@ fn log_install_results(results: &[ArtifactResult]) {
                 );
             }
             ArtifactResult::Skipped { agent, reason } => {
-                tracing::info!(
-                    agent = agent.as_str(),
-                    reason = *reason,
-                    "artifact skipped",
-                );
+                tracing::info!(agent = agent.as_str(), reason = *reason, "artifact skipped",);
             }
             ArtifactResult::Failed { agent, error } => {
                 tracing::warn!(

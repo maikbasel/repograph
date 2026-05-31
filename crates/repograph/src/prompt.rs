@@ -307,10 +307,7 @@ pub fn stdout_is_tty() -> bool {
 /// Returns [`RepographError::Io`] when cliclack cannot read from stdin (e.g.
 /// non-TTY context). Call sites SHOULD gate on [`stdout_is_tty`] before
 /// invoking.
-pub fn prompt_scope(
-    home: &Path,
-    cwd: &Path,
-) -> Result<agent_artifact::Scope, RepographError> {
+pub fn prompt_scope(home: &Path, cwd: &Path) -> Result<agent_artifact::Scope, RepographError> {
     cliclack::select::<agent_artifact::Scope>("Where should I install agent artifacts?")
         .item(
             agent_artifact::Scope::User,

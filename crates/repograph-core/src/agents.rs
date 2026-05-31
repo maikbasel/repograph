@@ -112,7 +112,7 @@ impl AgentId {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::items_after_statements)]
     use super::*;
 
     #[test]
