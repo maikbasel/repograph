@@ -253,6 +253,17 @@ fn probe_any(home: &Path, suffixes: &[&str]) -> bool {
 /// a fake `$HOME`.
 #[must_use]
 pub fn host_home() -> Option<PathBuf> {
+    // `dirs::home_dir()` on Windows resolves the profile via
+    // `SHGetKnownFolderPath` and ignores the `USERPROFILE` environment
+    // variable. Honor `USERPROFILE` first so home resolution stays overridable
+    // on Windows — matching long-standing Windows convention and the parity
+    // every other platform already gets through `$HOME`.
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE")
+        && !profile.is_empty()
+    {
+        return Some(PathBuf::from(profile));
+    }
     dirs::home_dir()
 }
 
