@@ -351,7 +351,7 @@ fn empty_agents_selection_yields_empty_agent_docs() {
     // to drive cliclack — mirror how init does it but with no agents.
     let toml = format!(
         "[agents]\nselected = []\n\n[repo.r]\npath = \"{}\"\n",
-        repo.display()
+        repo.display().to_string().replace('\\', "\\\\")
     );
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("config.toml"), toml).unwrap();
