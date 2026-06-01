@@ -4,7 +4,51 @@
 [![crates.io](https://img.shields.io/crates/v/repograph.svg)](https://crates.io/crates/repograph)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A CLI tool for registering, grouping, and exposing local git repositories as structured context for AI agents and humans alike.
+A CLI tool for registering, grouping, and exposing local git repositories as structured context for AI agents and humans.
+
+## Getting Started
+
+Three steps from zero to "my AI agent knows about my repos".
+
+### 1. Install
+
+```bash
+cargo install repograph
+```
+
+Alternatives (Homebrew, shell installer, PowerShell, pre-built binaries) are listed under [Install](#install).
+
+### 2. Run interactive setup
+
+```bash
+repograph init
+```
+
+This walks you through:
+
+- **Pick your agent toolchain(s)**: `claude-code`, `agents-md`, `cursor`, `aider`, `windsurf`, `copilot`. Multi-select; detection-preselected.
+- **Pick a projects root**: the directory where your git clones live (e.g. `~/code`). Persisted to config; asked once.
+- **Bulk-register repos**: every unregistered git repo under the projects root is offered as a checkbox. Add extra paths outside the root in the same pass.
+- **Assign repos to workspaces**: group related repos under a name (e.g. `acme`) for filtered listing and context aggregation.
+
+`repograph init` also drops a per-agent instruction file (a "skill" for Claude Code, `AGENTS.md` for agents-md, `.cursor/rules/repograph.mdc` for Cursor, …) so the agent learns when to call `repograph` on its own. The full path matrix is under [Per-agent artifact installation](#per-agent-artifact-installation).
+
+Non-interactive variant for dotfiles / CI: `repograph init --no-prompt --agents claude-code,cursor --scope user`.
+
+### 3. Use it
+
+```bash
+repograph list                                  # see what's registered
+repograph status                                # branch + working-tree state across all repos
+repograph status --workspace acme               # scoped to one workspace
+repograph context --workspace acme              # JSON payload of every CLAUDE.md / AGENTS.md / .cursorrules / … in the workspace
+eval "$(repograph switch repograph)"            # cd to a registered repo by name (see Shell integration below for the rg-cd wrapper)
+repograph doctor                                # read-only health check: missing paths, dangling members, missing agent docs
+```
+
+After `init`, run `repograph doctor` as a smoke test. If the agent artifact landed correctly you'll see a row like `AgentDocPresent  ok  <repo> / claude-code` for every repo × agent combination. Anything other than `ok`/`warn` is a problem; see [Exit codes](#exit-codes) and the [Doctor](#doctor) section for the full check catalog.
+
+The reference sections below cover the full command surface, JSON shapes, agent registry, install options, and exit codes.
 
 ## Commands
 
@@ -14,9 +58,9 @@ A CLI tool for registering, grouping, and exposing local git repositories as str
 | `repograph completions <shell>` | Emit a static completion script for `bash`, `zsh`, `fish`, `powershell`, or `elvish` on stdout. Generated against the live `Cli` so the script never drifts from the actual command surface. |
 | `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
 | `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
-| `repograph init` | Interactive setup — pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; optionally add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
+| `repograph init` | Interactive setup: pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
-| `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references — surface them via `workspace show`. |
+| `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. |
 | `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
 | `repograph switch <name>` | Emit `cd <path>` for the named registered repo on stdout, shell-eval-safe (single-quoted when the path contains whitespace or shell metacharacters). Pair with the `rg-cd` shell function below. |
 | `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
@@ -35,20 +79,20 @@ A global `--config-dir <PATH>` flag overrides the default config directory. The 
 ```toml
 # ~/.config/repograph/config.toml
 
-[repo.changelog-x]
-path = "/home/maik/IdeaProjects/changelog-x"
-description = "Conventional-commits changelog generator"
+[repo.api]
+path = "/home/user/code/api"
+description = "Core HTTP API service"
 stack = ["rust"]
 
-[repo.repograph]
-path = "/home/maik/IdeaProjects/repograph"
-stack = ["rust"]
+[repo.web]
+path = "/home/user/code/web"
+stack = ["typescript"]
 
 [workspace.acme]
 description = "Acme rebuild"
 members = [
-    "changelog-x",
-    "repograph",
+    "api",
+    "web",
 ]
 
 [agents]
@@ -58,7 +102,7 @@ selected = [
 ]
 
 [settings]
-projects_root = "/home/maik/IdeaProjects"
+projects_root = "/home/user/code"
 ```
 
 `[agents]` is written by `repograph init` (or auto-prompted by future agent-consuming commands on first run). Presence of the section signals "init has run"; an empty `selected = []` is a valid configured state (user opted out of agent docs).
@@ -75,15 +119,15 @@ $ repograph init
 
 A cliclack-driven flow:
 
-1. **Agent multiselect** — detection-preselected, deselectable.
-2. **Projects root** — pick from detected candidates (only those containing ≥1 git repo are surfaced), enter a custom path, or skip. Persisted to `[settings] projects_root`; asked only once.
-3. **Bulk repo registration** — `multiselect` of unregistered git repos under your projects root (no preselection — opt-in per repo), then an optional `Register a repo at a custom path?` loop for anything outside that root. The free-form path input has filesystem autocomplete (Tab) and `~` expansion. Basename conflicts during bulk add prompt once for an alternative name and otherwise log + skip so the rest of the batch proceeds.
-4. **Per-repo workspace routing** — when N>0 repos were registered, an outer `Add these N repos to workspaces?` confirm gates the step. On yes, you first walk an optional create-new loop (gated by a `Create new workspaces first?` confirm when workspaces already exist; entered directly otherwise) to seed the target pool. Then, for each registered repo in turn, a `Workspaces for '<repo>'` multiselect lets you pick that specific repo's workspaces — zero, one, or many. Different repos can land in different workspaces; empty picks leave a repo unassigned. The config is saved once at the end. The success log uses singular wording when exactly one repo lands in exactly one workspace; otherwise a multi-line `workspace assignments:` block lists each assigned repo with its chosen workspaces.
-5. **Summary** — final agents / repos / workspaces counts plus next-step hints.
+1. **Agent multiselect**: detection-preselected, deselectable.
+2. **Projects root**: pick from detected candidates (only those containing ≥1 git repo are surfaced), enter a custom path, or skip. Persisted to `[settings] projects_root`; asked only once.
+3. **Bulk repo registration**: `multiselect` of unregistered git repos under your projects root (no preselection, opt-in per repo), then an optional `Register a repo at a custom path?` loop for anything outside that root. The free-form path input has filesystem autocomplete (Tab) and `~` expansion. Basename conflicts during bulk add prompt once for an alternative name and otherwise log + skip so the rest of the batch proceeds.
+4. **Per-repo workspace routing**: when N>0 repos were registered, an outer `Add these N repos to workspaces?` confirm gates the step. On yes, you first walk an optional create-new loop (gated by a `Create new workspaces first?` confirm when workspaces already exist; entered directly otherwise) to seed the target pool. Then, for each registered repo in turn, a `Workspaces for '<repo>'` multiselect lets you pick that specific repo's workspaces: zero, one, or many. Different repos can land in different workspaces; empty picks leave a repo unassigned. The config is saved once at the end. The success log uses singular wording when exactly one repo lands in exactly one workspace; otherwise a multi-line `workspace assignments:` block lists each assigned repo with its chosen workspaces.
+5. **Summary**: final agents / repos / workspaces counts plus next-step hints.
 
 Re-running on an existing config shows a settings panel with actions including "Update agent selection", "Change project root", "Register another repo" (re-enters the bulk flow), "Manage workspaces", "Reset everything", "Cancel".
 
-Inside "Manage workspaces", **Create** asks for a name and then offers an immediate `multiselect` to populate the new workspace with any registered repos (default `yes`; skipped when no repos are registered). **Add members** also uses a `multiselect`, filtered to the repos that are NOT already in the chosen workspace — so a single trip through the menu can add many repos at once. Empty submissions are valid no-ops; if every registered repo is already a member (or the registry is empty), a WARN log explains the no-op and the menu returns without writing.
+Inside "Manage workspaces", **Create** asks for a name and then offers an immediate `multiselect` to populate the new workspace with any registered repos (default `yes`; skipped when no repos are registered). **Add members** also uses a `multiselect`, filtered to the repos that are NOT already in the chosen workspace, so a single trip through the menu can add many repos at once. Empty submissions are valid no-ops; if every registered repo is already a member (or the registry is empty), a WARN log explains the no-op and the menu returns without writing.
 
 Non-interactive (CI, dotfiles, non-TTY):
 
@@ -95,7 +139,7 @@ $ repograph init --no-prompt --agents claude-code,cursor --scope user
 
 #### `--scope <user|project>`
 
-Where to install per-agent artifacts (see "Per-agent artifact installation" below). Defaults to `user` when omitted in an interactive run. Required under `--no-prompt` when any selected agent has a meaningful scope choice (today: `claude-code`, `windsurf`); project-only agents (`agents-md`, `aider`, `cursor`) silently fall through to the project path regardless of this flag.
+Where to install per-agent artifacts (see "Per-agent artifact installation" below). Defaults to `user` when omitted in an interactive run. Required under `--no-prompt` when any selected agent has a meaningful scope choice (today: `claude-code`, `windsurf`); project-only agents (`agents-md`, `aider`, `cursor`) fall through to the project path regardless of this flag.
 
 #### `--force`
 
@@ -112,9 +156,9 @@ Overwrite existing artifacts even outside the managed delimiter block. Without t
 | `cursor`      | (project-only)                                        | `<cwd>/.cursor/rules/repograph.mdc`    |
 | `aider`       | (project-only)                                        | `<cwd>/CONVENTIONS.md`                 |
 | `windsurf`    | `~/.codeium/windsurf/memories/repograph.md`           | `<cwd>/.windsurfrules`                 |
-| `copilot`     | (deferred — no v1 writer)                             | (deferred — no v1 writer)              |
+| `copilot`     | (deferred, no v1 writer)                             | (deferred, no v1 writer)              |
 
-Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a delimiter pair (`<!-- repograph:begin --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs. Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one agent does not abort the others — the agent-selection persistence already succeeded.
+Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a delimiter pair (`<!-- repograph:begin --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs. Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one agent does not abort the others; the agent-selection persistence already succeeded.
 
 Selecting `copilot` is valid but writes no file in v1; the agent's instruction format varies across surfaces (repo-level, editor-level, Copilot Workspace) and no single converged path covers them yet.
 
@@ -153,12 +197,12 @@ Empty registry: `{ "repos": [] }`.
 {
   "name": "acme",
   "description": "Acme rebuild",
-  "members": [ { "name": "ui", "path": "/home/maik/IdeaProjects/ui", "description": null, "stack": [] } ],
+  "members": [ { "name": "ui", "path": "/home/user/code/ui", "description": null, "stack": [] } ],
   "dangling": ["api"]
 }
 ```
 
-`dangling` is always present (even when empty), making drift trivially detectable by agent consumers. A dangling member also produces a `WARN` line on stderr.
+`dangling` is always present (even when empty), so agent consumers can detect drift without a key-existence check. A dangling member also produces a `WARN` line on stderr.
 
 `repograph status --json` emits a `repos`-keyed envelope of richer per-repo status entries. The `error` field is always present (`null` on healthy rows) so consumers can branch on `repo.error != null` without a key-existence check:
 
@@ -167,7 +211,7 @@ Empty registry: `{ "repos": [] }`.
   "repos": [
     {
       "name": "api",
-      "path": "/home/maik/IdeaProjects/api",
+      "path": "/home/user/code/api",
       "branch": "main",
       "upstream": "origin/main",
       "ahead": 0,
@@ -181,7 +225,7 @@ Empty registry: `{ "repos": [] }`.
     },
     {
       "name": "ui",
-      "path": "/home/maik/IdeaProjects/ui",
+      "path": "/home/user/code/ui",
       "branch": "feat/x",
       "upstream": "origin/feat/x",
       "ahead": 2,
@@ -195,7 +239,7 @@ Empty registry: `{ "repos": [] }`.
     },
     {
       "name": "ghost",
-      "path": "/home/maik/IdeaProjects/ghost",
+      "path": "/home/user/code/ghost",
       "branch": null,
       "upstream": null,
       "ahead": 0,
@@ -211,15 +255,15 @@ Empty registry: `{ "repos": [] }`.
 }
 ```
 
-`state` is one of `clean`, `dirty`, `detached`, `unborn`, `bare`, `missing`. A missing or broken repo in a batch run does not abort the command (exit `0`); the failing row carries a populated `error` field and a `WARN` line lands on stderr. Asking explicitly for a single broken repo (`repograph status <name>`) exits `3` instead — that's a request, not a batch.
+`state` is one of `clean`, `dirty`, `detached`, `unborn`, `bare`, `missing`. A missing or broken repo in a batch run does not abort the command (exit `0`); the failing row carries a populated `error` field and a `WARN` line lands on stderr. Asking for a single broken repo by name (`repograph status <name>`) exits `3` instead; that's a request, not a batch.
 
-`repograph status --workspace acme --json` restricts the scope to live members of a workspace (dangling members silently skipped, parity with `list --workspace`).
+`repograph status --workspace acme --json` restricts the scope to live members of a workspace (dangling members skipped, parity with `list --workspace`).
 
 `repograph status --fetch` is opt-in and runs `git fetch` against each repo's upstream remote before computing ahead/behind. Without it, no network calls happen. A fetch failure on any one repo populates that repo's `error` field and isolates the failure; the rest of the batch still completes.
 
 ### Agent context
 
-`repograph context` is the headline command — it produces the payload an AI agent actually consumes. Three scope modes (mutually exclusive at the CLI layer):
+`repograph context` produces the payload an AI agent consumes. Three scope modes, mutually exclusive at the CLI layer:
 
 ```bash
 repograph context                          # every registered repo
@@ -231,8 +275,8 @@ On first use without `[agents]` configured, an interactive TTY prompts through t
 
 Output mode:
 
-- **TTY default** — Markdown to stdout (paste-ready into Claude / Cursor / ChatGPT). One `## <repo>` section per repo, one `### <agent>` subsection, one fenced code block per matched file. Fences fall back to `~~~` if the file content contains a backtick fence (so an inlined `CLAUDE.md` with code samples renders correctly).
-- **`--json` / non-TTY** — single-line JSON object on stdout, versioned by `schema_version`. Each repo block carries `name`, canonical `path`, current `branch` (`null` for detached / unborn / bare / missing), one `agent_docs` entry per selected agent (each with sorted `files`), and an inline `warnings` array. Top-level `warnings` carries global issues.
+- **TTY default**: Markdown to stdout (paste-ready into Claude / Cursor / ChatGPT). One `## <repo>` section per repo, one `### <agent>` subsection, one fenced code block per matched file. Fences fall back to `~~~` if the file content contains a backtick fence (so an inlined `CLAUDE.md` with code samples renders correctly).
+- **`--json` / non-TTY**: single-line JSON object on stdout, versioned by `schema_version`. Each repo block carries `name`, canonical `path`, current `branch` (`null` for detached / unborn / bare / missing), one `agent_docs` entry per selected agent (each with sorted `files`), and an inline `warnings` array. Top-level `warnings` carries global issues.
 
 ```json
 {
@@ -243,7 +287,7 @@ Output mode:
   "repos": [
     {
       "name": "api",
-      "path": "/home/maik/IdeaProjects/api",
+      "path": "/home/user/code/api",
       "branch": "main",
       "agent_docs": [
         {
@@ -269,7 +313,7 @@ Behavior contract:
 
 - **No truncation.** File contents are inlined verbatim. Total bytes is logged on stderr; downstream tooling owns the context-window budget.
 - **Per-file errors are inline, not fatal.** Unreadable, non-UTF-8, or missing files become warning entries on the enclosing repo's `warnings` array; the rest of the payload still ships and exit is `0`.
-- **Bounded filesystem walk.** Flat patterns (`CLAUDE.md`) are existence-checked; glob patterns (`.cursor/rules/*.md`) are matched against the entries of their known parent directory only — no recursion into `node_modules` or anywhere else.
+- **Bounded filesystem walk.** Flat patterns (`CLAUDE.md`) are existence-checked; glob patterns (`.cursor/rules/*.md`) are matched against the entries of their known parent directory only, with no recursion into `node_modules` or anywhere else.
 - **Stable ordering.** Top-level `repos` is sorted by name. Each `agent_docs` array preserves the order of `[agents].selected`. Each agent's `files` is sorted by path.
 - **Exit codes.** `0` success (including success-with-warnings); `2` for clap usage errors or non-TTY without `[agents]`; `3` for unknown workspace / repo name. `5` is not produced.
 
@@ -278,12 +322,12 @@ Behavior contract:
 `repograph switch <name>` writes exactly `cd <path>` (and nothing else) to stdout. Wrap it in a one-line shell function so a single command teleports between registered repos:
 
 ```bash
-# bash / zsh — add to ~/.bashrc or ~/.zshrc
+# bash / zsh: add to ~/.bashrc or ~/.zshrc
 rg-cd() { eval "$(repograph switch "$1")"; }
 ```
 
 ```fish
-# fish — add to ~/.config/fish/config.fish
+# fish: add to ~/.config/fish/config.fish
 function rg-cd
     eval (repograph switch $argv[1])
 end
@@ -291,7 +335,7 @@ end
 
 Then `rg-cd api` jumps to the registered repo `api`. Unknown names exit `3` with a `did you mean: …` hint on stderr when there's a near-miss.
 
-`switch` does **not** validate that the path still resolves — that's `repograph doctor`'s job, and the user's shell surfaces a missing-dir `cd` error directly. Use `repograph doctor` when something looks drifty.
+`switch` does **not** validate that the path still resolves; that's `repograph doctor`'s job, and the user's shell surfaces a missing-dir `cd` error on its own. Run `repograph doctor` when something looks off.
 
 One-time install of completions per shell (regenerate after upgrading `repograph`):
 
@@ -302,13 +346,13 @@ repograph completions bash > ~/.local/share/bash-completion/completions/repograp
 repograph completions zsh > "${fpath[1]}/_repograph"
 # fish
 repograph completions fish > ~/.config/fish/completions/repograph.fish
-# powershell (per-session — append to $PROFILE for persistence)
+# powershell (per-session; append to $PROFILE for persistence)
 repograph completions powershell | Out-String | Invoke-Expression
 # elvish (then `use repograph` in rc.elv)
 repograph completions elvish > ~/.config/elvish/lib/repograph.elv
 ```
 
-Completions are generated against the live `Cli` struct, so they always match the subcommands and flags the binary actually exposes.
+Completions are generated against the live `Cli` struct, so they match the subcommands and flags the binary exposes.
 
 ### Doctor
 
@@ -325,7 +369,7 @@ Completions are generated against the live `Cli` struct, so they always match th
 | `WorkspaceMembersResolve` | Per workspace member: the member name resolves to a registered repo.              | `warn`           |
 | `AgentDocPresent`         | Per repo × per selected agent: at least one file matches the pattern set.         | `warn`           |
 
-Every check that passes emits an `ok` finding too — you can audit *which* checks ran against *which* targets without consulting the catalog separately.
+Every check that passes emits an `ok` finding too, so you can audit *which* checks ran against *which* targets without consulting the catalog separately.
 
 ```json
 {
@@ -349,15 +393,15 @@ Every check that passes emits an `ok` finding too — you can audit *which* chec
 }
 ```
 
-The actual stdout is single-line for clean piping into `jq`. The `checks` array is sorted by `(severity DESC, check ASC, target ASC)` — most pressing first, stable order across runs.
+Stdout is single-line for clean piping into `jq`. The `checks` array is sorted by `(severity DESC, check ASC, target ASC)`: most pressing first, stable order across runs.
 
 Exit codes:
 
-- `0` — every finding is `ok` or `warn` (warnings do not gate; safe to wire into a `precmd` shell hook).
-- `1` — at least one `error` finding. Also returned when the config file is missing — the report is still emitted so you can see what failed.
-- `4` — the config file exists but cannot be read (permission denied). No report is emitted; the standard error path takes over.
+- `0`: every finding is `ok` or `warn` (warnings do not gate; safe to wire into a `precmd` shell hook).
+- `1`: at least one `error` finding. Also returned when the config file is missing; the report is still emitted so you can see what failed.
+- `4`: the config file exists but cannot be read (permission denied). No report is emitted; the standard error path takes over.
 
-`doctor` is read-only and zero-network — no config writes, no `git fetch`.
+`doctor` is read-only and zero-network: no config writes, no `git fetch`.
 
 ### Filtering by workspace
 
@@ -365,7 +409,7 @@ Exit codes:
 repograph list --workspace acme --json
 ```
 
-Restricts the registry listing to live members of `acme`. Dangling members are silently skipped (see `workspace show` for the audit view). A non-existent workspace name exits `3`.
+Restricts the registry listing to live members of `acme`. Dangling members are skipped (see `workspace show` for the audit view). A non-existent workspace name exits `3`.
 
 ## Exit codes
 
@@ -416,7 +460,7 @@ crates/
 └── repograph/        # CLI binary, depends on repograph-core
 ```
 
-The library is published separately (`cargo add repograph-core`) so future tools — alternate front-ends, editor plugins, or batch utilities — can share the same domain logic without going through the CLI. Agent integration ships as native per-agent instruction files written by `repograph init` (see "Per-agent artifact installation" above), not as a separate MCP binary.
+The library is published separately (`cargo add repograph-core`) so future tools (alternate front-ends, editor plugins, or batch utilities) can share the same domain logic without going through the CLI. Agent integration ships as native per-agent instruction files written by `repograph init` (see "Per-agent artifact installation" above), not as a separate MCP binary.
 
 ## Development
 
@@ -430,7 +474,7 @@ cargo deny check
 
 ## Release pipeline
 
-Releases are fully automated. **Do not** manually tag, bump versions, or edit the changelog.
+Releases are automated. **Do not** manually tag, bump versions, or edit the changelog.
 
 1. Push conventional commits to `master`.
 2. [Release Please](https://github.com/googleapis/release-please) opens or updates a release PR (per crate) with `CHANGELOG.md` updates and `Cargo.toml` version bumps.
@@ -450,13 +494,13 @@ Five GitHub repository secrets must be configured before the first release will 
 
 | Secret | Purpose |
 |---|---|
-| `RELEASE_PLEASE_TOKEN` | Fine-grained PAT scoped to this repo with `Contents: Read and write` + `Pull requests: Read and write` + `Issues: Read and write`. Required so release-please's release PR triggers downstream workflows on merge — the default `GITHUB_TOKEN` cannot. |
+| `RELEASE_PLEASE_TOKEN` | Fine-grained PAT scoped to this repo with `Contents: Read and write` + `Pull requests: Read and write` + `Issues: Read and write`. Required so release-please's release PR triggers downstream workflows on merge; the default `GITHUB_TOKEN` cannot. |
 | `CARGO_REGISTRY_TOKEN` | crates.io API token for publishing both crates. Generate at <https://crates.io/settings/tokens>. |
-| `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to [`maikbasel/homebrew-tap`](https://github.com/maikbasel/homebrew-tap) with `Contents: Read and write`. Used by `actions/checkout` in `release.yml` to push the regenerated formula. Shared with `changelog-x`'s release pipeline (same token can be reused). |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to [`maikbasel/homebrew-tap`](https://github.com/maikbasel/homebrew-tap) with `Contents: Read and write`. Used by `actions/checkout` in `release.yml` to push the regenerated formula. A single token can be reused across every project that publishes to the same tap. |
 | `GPG_PRIVATE_KEY` | ASCII-armored private key block (`gpg --armor --export-secret-keys <key-id>`). Used by `sign.yml` to attach detached signatures to each release. |
 | `GPG_PASSPHRASE` | Passphrase for the GPG key. Omit if the key has no passphrase. |
 
-Without `RELEASE_PLEASE_TOKEN`, the merge of a release PR will not fire `release.yml` — the chain breaks at the tag step.
+Without `RELEASE_PLEASE_TOKEN`, merging a release PR will not fire `release.yml`; the chain breaks at the tag step.
 
 ## License
 

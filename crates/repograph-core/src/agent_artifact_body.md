@@ -1,6 +1,6 @@
 ## What repograph is
 
-repograph is a CLI tool that maintains a registry of local git repositories and exposes their state — branches, status, agent-doc content (CLAUDE.md, AGENTS.md), workspace groupings — as structured JSON for AI agents. It runs locally; no network. The user has registered which repos matter to them via `repograph add` and selected their agent toolchains via `repograph init`. Reach for repograph whenever a request would benefit from cross-repo awareness instead of asking the user to paste paths or context manually.
+repograph is a CLI tool that maintains a registry of local git repositories and exposes their state (branches, status, agent-doc content like CLAUDE.md and AGENTS.md, workspace groupings) as structured JSON for AI agents. It runs locally; no network. The user has registered which repos matter to them via `repograph add` and selected their agent toolchains via `repograph init`. Reach for repograph whenever a request would benefit from cross-repo awareness instead of asking the user to paste paths or context manually.
 
 ## When to invoke
 
@@ -10,7 +10,7 @@ repograph is a CLI tool that maintains a registry of local git repositories and 
 - The user asks to switch to a repo: "cd into the api repo", "open the cli repo for me", "switch to <name>".
 - The user asks for status across projects: "which repos have uncommitted changes", "what's dirty right now".
 - The user wants the agent-doc content for one or more repos pulled into the conversation: "load the CLAUDE.md for repo X", "give me the AGENTS.md for workspace acme".
-- The user reports something feels off with their setup ("my agent isn't seeing X") — run `repograph doctor --json` to surface health-check findings before guessing.
+- The user reports something feels off with their setup ("my agent isn't seeing X"): run `repograph doctor --json` to surface health-check findings before guessing.
 
 ## Commands
 
@@ -22,7 +22,7 @@ repograph is a CLI tool that maintains a registry of local git repositories and 
 | Resolve a repo to a `cd` target       | `repograph switch <name>`     |
 | Diagnose registry health              | `repograph doctor --json`     |
 
-The `--json` form is the agent-facing surface — always pass it. Every command has a TTY-friendly table form for humans, but agents should consume JSON. `repograph switch <name>` prints exactly `cd <quoted-path>` on stdout; use it to ground filesystem operations to a known repo without rebuilding the path yourself.
+The `--json` form is the agent-facing surface; always pass it. Every command has a TTY-friendly table form for humans, but agents should consume JSON. `repograph switch <name>` prints exactly `cd <quoted-path>` on stdout; use it to ground filesystem operations to a known repo without rebuilding the path yourself.
 
 ## JSON envelope
 
@@ -39,5 +39,5 @@ Salient payload shapes:
 
 - Do not run mutating commands automatically. If the user appears to want to register a new repo, ask them to run `repograph add <path>` themselves rather than calling it. The same applies to `repograph remove` and `repograph workspace ...`. The registry is the user's to manage.
 - Do not assume any specific repo is registered without checking. Prefer `repograph list --json` (or `repograph context --json` for the full surface) over hardcoded names.
-- Do not paste the full `agent_docs` payload back to the user verbatim — it's intended as input to your own reasoning. Summarize when you reply.
+- Do not paste the full `agent_docs` payload back to the user verbatim; it's intended as input to your own reasoning. Summarize when you reply.
 - Do not call repograph in a loop. One `repograph context --json` returns every registered repo's context in one envelope; iterating per repo is slower and wasteful.
