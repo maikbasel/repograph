@@ -78,7 +78,7 @@ pub fn path_suggestions(input: &str) -> Vec<String> {
         return Vec::new();
     };
 
-    let mut matched: Vec<(String, PathBuf)> = read
+    let mut matched: Vec<String> = read
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let ft = entry.file_type().ok()?;
@@ -92,20 +92,21 @@ pub fn path_suggestions(input: &str) -> Vec<String> {
             if !name.starts_with(&prefix) {
                 return None;
             }
-            Some((name, entry.path()))
+            Some(name)
         })
         .collect();
-    matched.sort_by(|a, b| a.0.cmp(&b.0));
+    matched.sort_unstable();
 
+    // Reconstruct each suggestion from the parent string + entry name joined
+    // with `/`. The whole module operates on `/` separators (see
+    // `split_parent_prefix`), so we must not lean on `entry.path()`, which
+    // emits the OS separator (backslashes on Windows) and would break the
+    // round-trip back into the `/`-based autocomplete prompt.
+    let parent_str = parent.to_string_lossy();
+    let parent_base = parent_str.trim_end_matches('/');
     matched
         .into_iter()
-        .map(|(_, path)| {
-            let mut s = path.to_string_lossy().into_owned();
-            if !s.ends_with('/') {
-                s.push('/');
-            }
-            s
-        })
+        .map(|name| format!("{parent_base}/{name}/"))
         .collect()
 }
 
