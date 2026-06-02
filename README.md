@@ -12,11 +12,19 @@ Three steps from zero to "my AI agent knows about my repos".
 
 ### 1. Install
 
+With a Rust toolchain (1.85+):
+
 ```bash
 cargo install repograph
 ```
 
-Alternatives (Homebrew, shell installer, PowerShell, pre-built binaries) are listed under [Install](#install).
+On Linux or macOS without Rust, run the install script (drops a prebuilt binary into `~/.cargo/bin`):
+
+```bash
+curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.sh | sh
+```
+
+See [Install](#install) for Homebrew, the Windows PowerShell installer, and prebuilt binaries.
 
 ### 2. Run interactive setup
 
@@ -424,11 +432,14 @@ Restricts the registry listing to live members of `acme`. Dangling members are s
 
 ## Install
 
-### From crates.io
+Four ways in, by what you already have:
 
-```bash
-cargo install repograph
-```
+| You have | Use | Gets you |
+|---|---|---|
+| `brew` (macOS, Linux) | Homebrew | Auto-upgrades with `brew upgrade` |
+| Neither Rust nor brew | Shell / PowerShell installer | Prebuilt binary, no toolchain |
+| A Rust toolchain (1.85+) | crates.io | Builds from source |
+| An air-gapped or scripted setup | Prebuilt tarball | Manual placement + verification |
 
 ### Homebrew (macOS, Linux)
 
@@ -437,6 +448,8 @@ brew install maikbasel/tap/repograph
 ```
 
 ### Shell installer (Linux, macOS)
+
+Fetches the prebuilt binary for your platform into `~/.cargo/bin` (or `$CARGO_HOME/bin`). No Rust toolchain needed.
 
 ```bash
 curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.sh | sh
@@ -448,9 +461,17 @@ curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repog
 irm https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.ps1 | iex
 ```
 
+### From crates.io
+
+Compiles from source, so you need Rust 1.85 or newer.
+
+```bash
+cargo install repograph
+```
+
 ### Pre-built binaries
 
-Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc` are attached to every [GitHub Release](https://github.com/maikbasel/repograph/releases).
+Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc` hang off every [GitHub Release](https://github.com/maikbasel/repograph/releases), each with a SHA-256 checksum and a detached GPG signature (`.asc`). Verify a download against the maintainer's key before running it; steps are in [`SECURITY.md`](SECURITY.md).
 
 ## Workspace layout
 
