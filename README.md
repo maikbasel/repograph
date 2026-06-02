@@ -6,25 +6,15 @@
 
 A CLI tool for registering, grouping, and exposing local git repositories as structured context for AI agents and humans.
 
+[Getting Started](#getting-started) • [Install](#install) • [Commands](#commands) • [JSON output](#json-output-shapes) • [Shell integration](#shell-integration) • [Exit codes](#exit-codes)
+
 ## Getting Started
 
 Three steps from zero to "my AI agent knows about my repos".
 
 ### 1. Install
 
-With a Rust toolchain (1.85+):
-
-```bash
-cargo install repograph
-```
-
-On Linux or macOS without Rust, run the install script (drops a prebuilt binary into `~/.cargo/bin`):
-
-```bash
-curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.sh | sh
-```
-
-See [Install](#install) for Homebrew, the Windows PowerShell installer, and prebuilt binaries.
+`cargo install repograph` if you have a Rust toolchain (1.85+). Without one, use Homebrew, the Linux/macOS shell installer, the Windows PowerShell installer, or a prebuilt binary. Copy-paste commands for every method live under [Install](#install).
 
 ### 2. Run interactive setup
 
@@ -56,7 +46,48 @@ repograph doctor                                # read-only health check: missin
 
 After `init`, run `repograph doctor` as a smoke test. If the agent artifact landed correctly you'll see a row like `AgentDocPresent  ok  <repo> / claude-code` for every repo × agent combination. Anything other than `ok`/`warn` is a problem; see [Exit codes](#exit-codes) and the [Doctor](#doctor) section for the full check catalog.
 
-The reference sections below cover the full command surface, JSON shapes, agent registry, install options, and exit codes.
+## Install
+
+Four ways in, by what you already have:
+
+| You have | Use | Gets you |
+|---|---|---|
+| `brew` (macOS, Linux) | Homebrew | Auto-upgrades with `brew upgrade` |
+| Neither Rust nor brew | Shell / PowerShell installer | Prebuilt binary, no toolchain |
+| A Rust toolchain (1.85+) | crates.io | Builds from source |
+| An air-gapped or scripted setup | Prebuilt tarball | Manual placement + verification |
+
+### Homebrew (macOS, Linux)
+
+```bash
+brew install maikbasel/tap/repograph
+```
+
+### Shell installer (Linux, macOS)
+
+Fetches the prebuilt binary for your platform into `~/.cargo/bin` (or `$CARGO_HOME/bin`). No Rust toolchain needed.
+
+```bash
+curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.sh | sh
+```
+
+### PowerShell installer (Windows)
+
+```powershell
+irm https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.ps1 | iex
+```
+
+### From crates.io
+
+Compiles from source, so you need Rust 1.85 or newer.
+
+```bash
+cargo install repograph
+```
+
+### Pre-built binaries
+
+Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc` hang off every [GitHub Release](https://github.com/maikbasel/repograph/releases), each with a SHA-256 checksum and a detached GPG signature (`.asc`). Verify a download against the maintainer's key before running it; steps are in [`SECURITY.md`](SECURITY.md).
 
 ## Commands
 
@@ -429,49 +460,6 @@ Restricts the registry listing to live members of `acme`. Dangling members are s
 | 3 | Resource not found (path is not a git repo, name not registered) |
 | 4 | Permission denied (cannot read or write the config file) |
 | 5 | Conflict (name or path already registered) |
-
-## Install
-
-Four ways in, by what you already have:
-
-| You have | Use | Gets you |
-|---|---|---|
-| `brew` (macOS, Linux) | Homebrew | Auto-upgrades with `brew upgrade` |
-| Neither Rust nor brew | Shell / PowerShell installer | Prebuilt binary, no toolchain |
-| A Rust toolchain (1.85+) | crates.io | Builds from source |
-| An air-gapped or scripted setup | Prebuilt tarball | Manual placement + verification |
-
-### Homebrew (macOS, Linux)
-
-```bash
-brew install maikbasel/tap/repograph
-```
-
-### Shell installer (Linux, macOS)
-
-Fetches the prebuilt binary for your platform into `~/.cargo/bin` (or `$CARGO_HOME/bin`). No Rust toolchain needed.
-
-```bash
-curl -LsSf https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.sh | sh
-```
-
-### PowerShell installer (Windows)
-
-```powershell
-irm https://github.com/maikbasel/repograph/releases/latest/download/repograph-installer.ps1 | iex
-```
-
-### From crates.io
-
-Compiles from source, so you need Rust 1.85 or newer.
-
-```bash
-cargo install repograph
-```
-
-### Pre-built binaries
-
-Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc` hang off every [GitHub Release](https://github.com/maikbasel/repograph/releases), each with a SHA-256 checksum and a detached GPG signature (`.asc`). Verify a download against the maintainer's key before running it; steps are in [`SECURITY.md`](SECURITY.md).
 
 ## Workspace layout
 
