@@ -37,7 +37,15 @@ fn successful_switch_emits_exactly_cd_line() {
         .assert()
         .success();
     let stdout = std::str::from_utf8(&out.get_output().stdout).unwrap();
+    // The canonical path is emitted verbatim, single-quoted when it contains a
+    // shell metacharacter (see the shell-integration spec). A Unix `/tmp/...`
+    // tempdir path has none, so it is emitted bare; a Windows canonical path
+    // always contains `\` (and the `\\?\` verbatim prefix carries `?`), so it
+    // is single-quoted. Either way it is exactly one `cd <path>\n` line.
+    #[cfg(unix)]
     let expected = format!("cd {}\n", api.display());
+    #[cfg(windows)]
+    let expected = format!("cd '{}'\n", api.display());
     assert_eq!(
         stdout, expected,
         "stdout is exactly `cd <path>\\n`, got: {stdout:?}"
