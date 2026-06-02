@@ -497,20 +497,6 @@ Releases are automated. **Do not** manually tag, bump versions, or edit the chan
 
 The `security.yml` workflow runs `rustsec/audit-check` daily at 00:00 UTC and on demand via `workflow_dispatch`. The `sign.yml` workflow fires after `Release` completes and attaches GPG-detached signatures (`.asc`) for every binary, source tarball, and installer script in the GitHub Release. See [`SECURITY.md`](SECURITY.md) for verification instructions.
 
-## First-time setup
-
-Five GitHub repository secrets must be configured before the first release will fully succeed (Settings → Secrets and variables → Actions):
-
-| Secret | Purpose |
-|---|---|
-| `RELEASE_PLEASE_TOKEN` | Fine-grained PAT scoped to this repo with `Contents: Read and write` + `Pull requests: Read and write` + `Issues: Read and write`. Required so release-please's release PR triggers downstream workflows on merge; the default `GITHUB_TOKEN` cannot. |
-| `CARGO_REGISTRY_TOKEN` | crates.io API token for publishing both crates. Generate at <https://crates.io/settings/tokens>. |
-| `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to [`maikbasel/homebrew-tap`](https://github.com/maikbasel/homebrew-tap) with `Contents: Read and write`. Used by `actions/checkout` in `release.yml` to push the regenerated formula. A single token can be reused across every project that publishes to the same tap. |
-| `GPG_PRIVATE_KEY` | ASCII-armored private key block (`gpg --armor --export-secret-keys <key-id>`). Used by `sign.yml` to attach detached signatures to each release. |
-| `GPG_PASSPHRASE` | Passphrase for the GPG key. Omit if the key has no passphrase. |
-
-Without `RELEASE_PLEASE_TOKEN`, merging a release PR will not fire `release.yml`; the chain breaks at the tag step.
-
 ## License
 
 Licensed under the [MIT License](LICENSE.md).
