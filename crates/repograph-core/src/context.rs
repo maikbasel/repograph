@@ -111,7 +111,7 @@ impl RepoContext {
         // Canonicalize early. A missing path produces a placeholder entry
         // with no agent docs and a single warning — consistent with how the
         // git-status spec handles repos that drifted away under the user.
-        let canonical = match fs_err::canonicalize(repo_path) {
+        let canonical = match crate::path::canonicalize(repo_path) {
             Ok(p) => p,
             Err(e) => {
                 return Self {
@@ -370,7 +370,7 @@ mod tests {
             repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
                 .unwrap();
         }
-        std::fs::canonicalize(&path).unwrap()
+        crate::path::canonicalize(&path).unwrap()
     }
 
     // ─── classify_pattern: every v1 registry pattern lands the right way ───

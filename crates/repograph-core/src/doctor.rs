@@ -387,7 +387,7 @@ mod tests {
         let tree = repo.find_tree(tree_id).unwrap();
         repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
             .unwrap();
-        std::fs::canonicalize(&path).unwrap()
+        crate::path::canonicalize(&path).unwrap()
     }
 
     fn write_config(dir: &Path, body: &str) {

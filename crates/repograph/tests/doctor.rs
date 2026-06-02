@@ -130,7 +130,7 @@ fn non_git_path_emits_repo_path_ok_and_repo_is_git_repo_error() {
     std::fs::create_dir_all(&plain).unwrap();
     // Cannot use repograph add (it validates git-repo-ness). Build the config
     // via the registry directly through init + writing config.toml.
-    let canonical = std::fs::canonicalize(&plain).unwrap();
+    let canonical = repograph_core::path::canonicalize(&plain).unwrap();
     let body = format!(
         "[repo.notes]\npath = \"{}\"\n",
         canonical.display().to_string().replace('\\', "\\\\")

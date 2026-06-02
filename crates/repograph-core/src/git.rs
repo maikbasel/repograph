@@ -14,7 +14,7 @@ use crate::error::RepographError;
 /// Returns [`RepographError::NotFound`] when `path` does not exist on disk, or
 /// [`RepographError::GitOpen`] when it exists but is not a git repository.
 pub fn validate_git_repo(path: &Path) -> Result<PathBuf, RepographError> {
-    let canonical = match fs_err::canonicalize(path) {
+    let canonical = match crate::path::canonicalize(path) {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(RepographError::NotFound {
@@ -121,7 +121,7 @@ pub fn inspect(name: &str, path: &Path, fetch: bool) -> RepoStatus {
     // Canonicalize so the row's `path` matches what's stored in the registry
     // post-validation. If the path no longer exists or isn't accessible,
     // surface as missing without a stack trace.
-    let canonical = match fs_err::canonicalize(path) {
+    let canonical = match crate::path::canonicalize(path) {
         Ok(p) => p,
         Err(e) => {
             return RepoStatus::missing(name, path, format!("{e}"));
@@ -378,7 +378,7 @@ mod tests {
         git2::Repository::init(&repo_path).unwrap();
 
         let resolved = validate_git_repo(&repo_path).unwrap();
-        assert_eq!(resolved, std::fs::canonicalize(&repo_path).unwrap());
+        assert_eq!(resolved, crate::path::canonicalize(&repo_path).unwrap());
     }
 
     // ─── inspect() unit tests ──────────────────────────────────────────────

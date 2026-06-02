@@ -179,8 +179,8 @@ fn add_name_conflict_returns_exit_5() {
         .stderr(predicate::str::contains("foo"));
 
     let body = std::fs::read_to_string(config_dir.join("config.toml")).unwrap();
-    let first_canon = std::fs::canonicalize(&first).unwrap();
-    let second_canon = std::fs::canonicalize(&second).unwrap();
+    let first_canon = repograph_core::path::canonicalize(&first).unwrap();
+    let second_canon = repograph_core::path::canonicalize(&second).unwrap();
     assert!(
         body.contains(first_canon.to_string_lossy().as_ref()),
         "original entry still present"

@@ -11,6 +11,7 @@ pub mod context;
 pub mod doctor;
 pub mod error;
 pub mod git;
+pub mod path;
 
 pub use agent_artifact::{
     ArtifactResult, BODY as AGENT_ARTIFACT_BODY, DELIMITER_BEGIN, DELIMITER_END,

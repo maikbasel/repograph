@@ -64,7 +64,7 @@ pub fn fixture_git_repo(parent: &Path, name: &str) -> PathBuf {
             .expect("initial commit");
     }
     drop(repo);
-    std::fs::canonicalize(&path).expect("canonicalize fixture path")
+    repograph_core::path::canonicalize(&path).expect("canonicalize fixture path")
 }
 
 /// Parse JSON output from `repograph list --json` and return the `repos` array.
@@ -115,7 +115,7 @@ pub fn fixture_bare_git_repo(parent: &Path, name: &str) -> PathBuf {
     let path = parent.join(name);
     std::fs::create_dir_all(&path).expect("create fixture dir");
     Repository::init_bare(&path).expect("git init --bare");
-    std::fs::canonicalize(&path).expect("canonicalize fixture path")
+    repograph_core::path::canonicalize(&path).expect("canonicalize fixture path")
 }
 
 /// Initialize an unborn git repository (no commits, HEAD unborn) at
@@ -124,7 +124,7 @@ pub fn fixture_unborn_git_repo(parent: &Path, name: &str) -> PathBuf {
     let path = parent.join(name);
     std::fs::create_dir_all(&path).expect("create fixture dir");
     Repository::init(&path).expect("git init");
-    std::fs::canonicalize(&path).expect("canonicalize fixture path")
+    repograph_core::path::canonicalize(&path).expect("canonicalize fixture path")
 }
 
 /// Initialize a git repo with one commit, then modify a tracked file so the
@@ -224,7 +224,7 @@ pub fn attach_upstream(repo_path: &Path, branch: &str) -> PathBuf {
                 .expect("initial fetch from upstream");
         }
     }
-    std::fs::canonicalize(&bare_dir).expect("canonicalize bare path")
+    repograph_core::path::canonicalize(&bare_dir).expect("canonicalize bare path")
 }
 
 /// Append `count` empty commits to the local branch of the repo at `repo_path`.
