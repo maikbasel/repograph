@@ -12,7 +12,11 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      released: ${{ steps.release.outputs.release_created }}
+      # Manifest mode (config-file + manifest-file) exposes the aggregate
+      # boolean as `releases_created` (plural). The singular `release_created`
+      # is only set in single-package mode and is empty here, which silently
+      # skipped the publish job for v0.2.0.
+      released: ${{ steps.release.outputs.releases_created }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
