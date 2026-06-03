@@ -17,7 +17,7 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
-# Don't create GitHub Release (Release Please handles that)
+# Don't create GitHub Release (release-plz creates it on tag)
 create-release = false
 # Only run plan on PRs (don't build artifacts)
 pr-run-mode = "plan"

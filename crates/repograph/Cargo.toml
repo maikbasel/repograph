@@ -15,7 +15,7 @@ name = "repograph"
 path = "src/main.rs"
 
 [dependencies]
-repograph-core = { path = "../repograph-core", version = "0.1.0" }
+repograph-core = { path = "../repograph-core", version = "0.2.0" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 comfy-table = "7"

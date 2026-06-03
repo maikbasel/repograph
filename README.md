@@ -486,10 +486,9 @@ cargo deny check
 Releases are automated. **Do not** manually tag, bump versions, or edit the changelog.
 
 1. Push conventional commits to `master`.
-2. [Release Please](https://github.com/googleapis/release-please) opens or updates a release PR (per crate) with `CHANGELOG.md` updates and `Cargo.toml` version bumps.
-3. Merge the release PR → Release Please pushes per-crate tags.
-4. The `release-please.yml` workflow publishes both crates to crates.io (core first, then bin).
-5. The [`dist`](https://github.com/axodotdev/cargo-dist)-generated `release.yml` workflow fires on the bin's tag and:
+2. [release-plz](https://release-plz.dev) opens or updates a release PR with `CHANGELOG.md` updates and `Cargo.toml` version bumps. `repograph` and `repograph-core` move in lock-step via a shared `version_group`.
+3. Merge the release PR → release-plz publishes both crates to crates.io (core first, then bin) and pushes per-package tags (`repograph-v*`, `repograph-core-v*`).
+4. The [`dist`](https://github.com/axodotdev/cargo-dist)-generated `release.yml` workflow fires on the `repograph-v*` tag and:
     - Builds binaries for all five target platforms
     - Uploads tarballs, the source tarball, and SHA-256 checksums to the GitHub Release
     - Publishes shell + PowerShell installers

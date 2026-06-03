@@ -1,6 +1,6 @@
 [package]
 name = "repograph-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Core library for repograph: registering, grouping, and exposing local git repositories as structured context for AI agents."
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,13 @@ repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
 rust-version.workspace = true
+
+# repograph-core is a library with no binaries. cargo-dist only builds the
+# `repograph` binary; this opt-out makes dist refuse the `repograph-core-v*`
+# tag that release-plz pushes for the lib instead of producing an empty
+# release.
+[package.metadata.dist]
+dist = false
 
 [lib]
 name = "repograph_core"

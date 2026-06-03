@@ -1,0 +1,16 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+#
+# repograph and repograph-core are released in lock-step: repograph-core is an
+# internal split with no external consumers, so its version number carries no
+# independent SemVer signal. A shared `version_group` keeps both crates on a
+# single project version. release-plz determines the next version from
+# conventional commits + cargo-semver-checks, then assigns the group the
+# highest next version among its members.
+
+[[package]]
+name = "repograph"
+version_group = "repograph"
+
+[[package]]
+name = "repograph-core"
+version_group = "repograph"

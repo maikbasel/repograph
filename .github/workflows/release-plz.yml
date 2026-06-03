@@ -1,0 +1,62 @@
+name: Release-plz
+
+# release-plz replaces release-please for this Rust workspace. It compares the
+# local crates against crates.io to decide what to publish, opens a release PR
+# with version bumps + changelogs, and on merge publishes both crates (in
+# dependency order: repograph-core before repograph) and pushes per-package
+# tags. The `repograph-v*` tag triggers cargo-dist (release.yml) to build
+# binaries; the `repograph-core-v*` tag is a no-op there (dist = false on the
+# lib).
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Publish to crates.io and create tags/releases when a release PR is merged
+  # (or whenever a local crate version is ahead of crates.io).
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release
+        env:
+          # A PAT (not the default GITHUB_TOKEN) so the tag release-plz pushes
+          # triggers the cargo-dist Release workflow. The same secret that
+          # release-please used works here.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Open or update the release PR with version bumps and changelog entries.
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release-pr
+        env:
+          # PAT so the release PR (and its branch) triggers CI workflows.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
