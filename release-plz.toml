@@ -14,3 +14,8 @@ version_group = "repograph"
 [[package]]
 name = "repograph-core"
 version_group = "repograph"
+# The lib has no binaries and no GitHub-release assets. Without this, its
+# asset-less release becomes the repo's "latest" and breaks the
+# /releases/latest/download/* installer URLs. It still publishes to
+# crates.io and gets a git tag; it just doesn't create a GitHub Release.
+git_release_enable = false
