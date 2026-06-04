@@ -16,7 +16,7 @@ repograph is a CLI tool that maintains a registry of local git repositories and 
 
 | Intent                                | Command                       |
 |---------------------------------------|-------------------------------|
-| List registered repos and workspaces  | `repograph list --json`       |
+| List registered repos                  | `repograph list --json`       |
 | Show per-repo git status              | `repograph status --json`     |
 | Build full agent context for repos    | `repograph context --json`    |
 | Resolve a repo to a `cd` target       | `repograph switch <name>`     |
@@ -26,14 +26,16 @@ The `--json` form is the agent-facing surface; always pass it. Every command has
 
 ## JSON envelope
 
-Every JSON response carries a top-level `schema_version` integer field. Today's schema is `1`. The wrapper shape is `{ "schema_version": 1, ... }` plus command-specific fields. Schemas are stable: additive changes (new optional fields) keep `schema_version = 1`; breaking changes bump the version. Read the version field if you're being defensive.
+All commands write JSON to stdout and diagnostic logs to stderr, so `repograph <cmd> --json 2>/dev/null` always yields clean, parseable JSON — never merge stderr into it.
+
+The richer commands (`context`, `doctor`) carry a top-level `schema_version` integer field; today's schema is `1`. The lighter commands (`list`, `status`) currently emit a bare `{ "repos": [...] }` with no `schema_version`. Read the field defensively (`.schema_version // null`) rather than assuming it's present. Schemas are stable: additive changes (new optional fields) keep `schema_version = 1`; breaking changes bump it.
 
 Salient payload shapes:
 
-- `repograph list --json` → `repos`: per-repo records with `name`, `path`, `workspaces`.
-- `repograph status --json` → `repos`: per-repo records with `name`, `path`, `branch`, and a `status` summary.
-- `repograph context --json` → `repos`: each entry has `name`, `path`, `branch`, `head_short`, `status_summary`, and (when present) `agent_docs` with inlined CLAUDE.md / AGENTS.md content. This is the primary surface for loading context into your reasoning.
-- `repograph doctor --json` → `schema_version`, `generated_at`, `checks` (array of findings with severity), and a `summary` block.
+- `repograph list --json` → `{ "repos": [...] }`. Each record: `name`, `path`, `description` (often `null`), `stack` (array, often empty). No `schema_version`.
+- `repograph status --json` → `{ "repos": [...] }`. Each record: `name`, `path`, `branch`, `upstream`, `ahead`, `behind`, `dirty`, `staged`, `unstaged`, `untracked`, `state` (`"clean"`/`"dirty"`), `error`. No `schema_version`.
+- `repograph context --json` → top-level `schema_version`, `generated_at`, `scope`, `agents`, `warnings`, `repos`. Each repo entry: `name`, `path`, `branch`, `warnings`, and (when present) `agent_docs` — an array of `{ agent, files: [...] }` with inlined CLAUDE.md / AGENTS.md content. This is the primary surface for loading context into your reasoning.
+- `repograph doctor --json` → `schema_version`, `generated_at`, `checks` (array of findings with `check`, `severity`, `target`, `message`), and a `summary` block (`ok`, `warn`, `error`, `total`).
 
 ## Things to avoid
 
