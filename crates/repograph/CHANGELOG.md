@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.1](https://github.com/maikbasel/repograph/compare/repograph-v0.2.0...repograph-v0.2.1) - 2026-06-04
+
+### Fixed
+
+- silence info-level logs in interactive (TTY) sessions
+
+### Other
+
+- migrate release automation from release-please to release-plz
+
 ## [0.2.0](https://github.com/maikbasel/repograph/compare/v0.1.0...v0.2.0) (2026-06-02)
 
 
