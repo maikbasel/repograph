@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use is_terminal::IsTerminal;
 use repograph_core::{Config, RepographError};
 use tracing_subscriber::EnvFilter;
 
@@ -82,7 +83,19 @@ fn main() -> ExitCode {
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // Default level is TTY-aware: when stderr is a terminal, an interactive
+    // human is driving the CLI and the cliclack prompt UI shares stderr, so
+    // info-level diagnostics would shred the wizard — default to `warn`. When
+    // stderr is piped (CI, agents, log capture), keep `info` so the audit
+    // trail is preserved without polluting stdout's data contract. `RUST_LOG`
+    // overrides either default.
+    let default_level = if std::io::stderr().is_terminal() {
+        "warn"
+    } else {
+        "info"
+    };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
