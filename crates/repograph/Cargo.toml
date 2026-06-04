@@ -24,6 +24,20 @@ is-terminal = "0.4"
 rayon = "1"
 cliclack = "=0.5.4"
 dirs = "5"
+fs-err = { workspace = true }
+# Self-update: axoupdater drives receipt-aware in-place upgrades and the version
+# query for the passive notifier. `default-features = false` keeps the `blocking`
+# feature (and tokio["full"]) out — we drive its async methods on a private
+# current-thread runtime instead (see commands/update.rs / update_notify.rs).
+axoupdater = { version = "0.10", default-features = false, features = ["github_releases"] }
+# Minimal tokio to host the current-thread runtime that blocks on axoupdater's
+# async calls; `net`+`time` enable the IO/time drivers reqwest needs.
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+# axoasset pulls reqwest with `default-features = false` and NO TLS feature, so
+# HTTPS to GitHub would fail. Declaring reqwest here with rustls-tls unions that
+# feature onto the shared reqwest in the graph — rustls (not system OpenSSL) so
+# the windows-msvc and linux-gnu cross targets need no OpenSSL headers.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "json"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { workspace = true }

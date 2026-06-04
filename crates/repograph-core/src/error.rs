@@ -72,6 +72,14 @@ pub enum RepographError {
     /// surface, not the error message.
     #[error("doctor found {count} error finding(s) — see report above")]
     DoctorErrorsFound { count: u32 },
+
+    /// `repograph update` failed to reach, download, or verify a release.
+    /// Covers network/IO failures and checksum/signature verification
+    /// failures. Maps to exit code `1`. A binary-write permission failure is
+    /// reported through [`RepographError::PermissionDenied`] (exit `4`)
+    /// instead, so this variant is reserved for general update failures.
+    #[error("update failed: {0}")]
+    UpdateFailed(String),
 }
 
 impl RepographError {
@@ -88,7 +96,8 @@ impl RepographError {
             Self::Io(_)
             | Self::ConfigParse(_)
             | Self::ConfigWrite(_)
-            | Self::DoctorErrorsFound { .. } => 1,
+            | Self::DoctorErrorsFound { .. }
+            | Self::UpdateFailed(_) => 1,
         }
     }
 }
@@ -166,6 +175,12 @@ mod tests {
         let err = RepographError::NeedsInit("agents not configured; run `repograph init`".into());
         assert_eq!(err.exit_code(), 2);
         assert!(err.to_string().contains("repograph init"));
+    }
+
+    #[test]
+    fn update_failed_maps_to_1() {
+        let err = RepographError::UpdateFailed("network unreachable".into());
+        assert_eq!(err.exit_code(), 1);
     }
 
     #[test]

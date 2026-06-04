@@ -3,6 +3,7 @@
 mod commands;
 mod output;
 mod prompt;
+mod selfupdate;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -50,6 +51,10 @@ enum Command {
     /// Emit `cd <path>` for the named registered repo, eval-ready in any
     /// shell. Pair with the `rg-cd` shell function documented in the README.
     Switch(commands::switch::Args),
+    /// Update repograph in place (installer/tarball installs) or report the
+    /// upgrade command for Homebrew / `cargo install` builds. `--check` reports
+    /// availability without installing.
+    Update(commands::update::Args),
     /// Manage workspaces (named groupings of registered repositories).
     Workspace(commands::workspace::Args),
 }
@@ -63,6 +68,8 @@ fn main() -> ExitCode {
         Err(e) => return report(&e),
     };
 
+    let command_is_update = matches!(cli.command, Command::Update(_));
+
     let result = match cli.command {
         Command::Add(args) => commands::add::run(args, &config_dir),
         Command::Completions(args) => commands::completions::run(&args),
@@ -73,13 +80,20 @@ fn main() -> ExitCode {
         Command::Remove(args) => commands::remove::run(&args, &config_dir),
         Command::Status(args) => commands::status::run(&args, &config_dir),
         Command::Switch(args) => commands::switch::run(&args, &config_dir),
+        Command::Update(args) => commands::update::run(&args),
         Command::Workspace(args) => commands::workspace::run(args, &config_dir),
     };
 
-    match result {
+    let exit = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => report(&e),
-    }
+    };
+
+    // Passive update nudge — runs after the command's work, never alters the
+    // exit code, and is fully gated + fail-silent inside `notify`.
+    selfupdate::notify(command_is_update);
+
+    exit
 }
 
 fn init_tracing() {

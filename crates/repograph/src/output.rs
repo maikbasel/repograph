@@ -593,6 +593,56 @@ const fn check_label(c: Check) -> &'static str {
     }
 }
 
+/// Render the outcome of a `repograph update` run to `writer` (stderr in
+/// practice — the command has no stdout data payload).
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if the write fails.
+pub fn render_update_outcome<W: Write>(
+    writer: &mut W,
+    outcome: &crate::selfupdate::UpdateOutcome,
+) -> io::Result<()> {
+    use crate::selfupdate::UpdateOutcome;
+    let current = env!("CARGO_PKG_VERSION");
+    match outcome {
+        UpdateOutcome::Updated { from: Some(from), to } => {
+            writeln!(writer, "Updated repograph {from} → {to}.")
+        }
+        UpdateOutcome::Updated { from: None, to } => {
+            writeln!(writer, "Updated repograph to {to}.")
+        }
+        UpdateOutcome::AlreadyCurrent => {
+            writeln!(writer, "repograph {current} is already the latest version.")
+        }
+        UpdateOutcome::UpdateAvailable { latest } => writeln!(
+            writer,
+            "repograph {latest} is available (you have {current}). Run `repograph update` to install it."
+        ),
+        UpdateOutcome::DeferToPackageManager => writeln!(
+            writer,
+            "repograph was installed via a package manager — update with `brew upgrade repograph` or `cargo install repograph`."
+        ),
+    }
+}
+
+/// Render the passive update notice to `writer` (always stderr in practice).
+/// A single line naming the available and running versions and how to upgrade.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if the write fails.
+pub fn render_update_notice<W: Write>(
+    writer: &mut W,
+    current: &str,
+    latest: &str,
+) -> io::Result<()> {
+    writeln!(
+        writer,
+        "repograph {latest} available (you have {current}) — run `repograph update` or upgrade via your package manager."
+    )
+}
+
 fn serde_json_to_repograph(e: serde_json::Error) -> RepographError {
     if e.is_io() {
         RepographError::Io(e.into())
@@ -608,6 +658,67 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use std::path::PathBuf;
+
+    fn outcome_line(outcome: &crate::selfupdate::UpdateOutcome) -> String {
+        let mut buf = Vec::new();
+        render_update_outcome(&mut buf, outcome).unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn outcome_updated_with_prior_version_names_both() {
+        let s = outcome_line(&crate::selfupdate::UpdateOutcome::Updated {
+            from: Some("0.2.1".into()),
+            to: "0.3.0".into(),
+        });
+        assert!(s.contains("0.2.1") && s.contains("0.3.0"), "{s}");
+        assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn outcome_updated_without_prior_version_names_target() {
+        let s = outcome_line(&crate::selfupdate::UpdateOutcome::Updated {
+            from: None,
+            to: "0.3.0".into(),
+        });
+        assert!(s.contains("0.3.0"), "{s}");
+    }
+
+    #[test]
+    fn outcome_already_current_says_latest() {
+        let s = outcome_line(&crate::selfupdate::UpdateOutcome::AlreadyCurrent);
+        assert!(s.contains(env!("CARGO_PKG_VERSION")), "{s}");
+        assert!(s.contains("latest"), "{s}");
+    }
+
+    #[test]
+    fn outcome_update_available_points_at_update_command() {
+        let s = outcome_line(&crate::selfupdate::UpdateOutcome::UpdateAvailable {
+            latest: "0.3.0".into(),
+        });
+        assert!(s.contains("0.3.0") && s.contains("repograph update"), "{s}");
+    }
+
+    #[test]
+    fn outcome_defer_names_both_package_managers() {
+        let s = outcome_line(&crate::selfupdate::UpdateOutcome::DeferToPackageManager);
+        assert!(s.contains("brew upgrade repograph"), "{s}");
+        assert!(s.contains("cargo install repograph"), "{s}");
+    }
+
+    #[test]
+    fn update_notice_names_versions_and_command() {
+        let mut buf = Vec::new();
+        render_update_notice(&mut buf, "0.2.1", "0.3.0").unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("0.3.0"), "names the available version: {s}");
+        assert!(s.contains("0.2.1"), "names the running version: {s}");
+        assert!(
+            s.contains("repograph update"),
+            "points at the update command: {s}"
+        );
+        assert!(s.ends_with('\n'), "is a single terminated line: {s:?}");
+    }
 
     fn fixture() -> BTreeMap<String, Repo> {
         let mut map = BTreeMap::new();

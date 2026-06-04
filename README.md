@@ -89,6 +89,20 @@ cargo install repograph
 
 Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc` hang off every [GitHub Release](https://github.com/maikbasel/repograph/releases), each with a SHA-256 checksum and a detached GPG signature (`.asc`). Verify a download against the maintainer's key before running it; steps are in [`SECURITY.md`](SECURITY.md).
 
+## Updating
+
+How you update depends on how you installed:
+
+| Installed via | Update with |
+|---|---|
+| Homebrew | `brew upgrade repograph` |
+| crates.io | `cargo install repograph` |
+| Shell / PowerShell installer, or a tarball | `repograph update` — upgrades the binary in place, verifying the download's checksum |
+
+`repograph update` is install-method aware: on a Homebrew or `cargo install` build it changes nothing and prints the package-manager command above instead of clobbering a managed binary. Use `repograph update --check` to see whether a newer version exists without installing it.
+
+In an interactive terminal, repograph also prints a one-line notice on **stderr** when a newer version is available. The check runs at most once per 24 hours and never touches stdout. Silence it by setting either `REPOGRAPH_NO_UPDATE_CHECK` or the cross-tool `NO_UPDATE_NOTIFIER` environment variable.
+
 ## Commands
 
 | Command | Purpose |
@@ -102,6 +116,7 @@ Tarballs for `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-apple-darwin`, `aa
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. |
 | `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
 | `repograph switch <name>` | Emit `cd <path>` for the named registered repo on stdout, shell-eval-safe (single-quoted when the path contains whitespace or shell metacharacters). Pair with the `rg-cd` shell function below. |
+| `repograph update [--check]` | Update repograph in place when it was installed via the shell/PowerShell installer or a tarball (checksum-verified). Homebrew / `cargo install` builds are left untouched — it prints the right package-manager command instead. `--check` reports availability without installing. |
 | `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
 | `repograph workspace rm <name>` | Delete a workspace. Registered repos are not touched. |
 | `repograph workspace ls [--json]` | List the registered workspaces with name, description, and member count. |
