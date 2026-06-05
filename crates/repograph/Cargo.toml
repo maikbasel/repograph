@@ -1,7 +1,7 @@
 [package]
 name = "repograph"
 version = "0.3.0"
-description = "CLI for registering, grouping, and exposing local git repositories as structured context for AI agents."
+description = "Register, group, and expose local git repos as structured context for AI agents"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
