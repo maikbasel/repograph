@@ -25,7 +25,7 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 fs-err = { workspace = true }
 dunce = { workspace = true }
-toml = "0.9"
+toml = "1.0"
 git2 = { version = "0.21", default-features = false, features = [
     "vendored-libgit2",
     "vendored-openssl",
