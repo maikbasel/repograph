@@ -17,5 +17,13 @@ version_group = "repograph"
 # The lib has no binaries and no GitHub-release assets. Without this, its
 # asset-less release becomes the repo's "latest" and breaks the
 # /releases/latest/download/* installer URLs. It still publishes to
-# crates.io and gets a git tag; it just doesn't create a GitHub Release.
+# crates.io (the published `repograph` binary requires it on the registry);
+# it just doesn't create a GitHub Release.
 git_release_enable = false
+# Don't push a `repograph-core-v*` git tag. cargo-dist's release workflow
+# triggers on any `**[0-9]+.[0-9]+.[0-9]+*` tag, so a lib tag spawns a dist
+# run that fails with "nothing for dist to Release" (the lib has no
+# artifacts — see its `dist = false`). The `repograph-v*` tag drives the
+# actual release; core needs no tag of its own (release-plz reads its last
+# version from crates.io). Flip back on only if core ever ships binaries.
+git_tag_enable = false

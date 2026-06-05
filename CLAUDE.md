@@ -275,7 +275,7 @@ Releases are fully automated — do not manually tag, bump versions, or edit the
 
 1. Push conventional commits to `master`
 2. release-plz opens/updates a release PR with `CHANGELOG.md` update and `Cargo.toml` version bump (both crates lock-step via a shared `version_group`)
-3. Merge the release PR → release-plz publishes both crates to crates.io (core first, then bin) and pushes per-package tags (`repograph-v*`, `repograph-core-v*`)
+3. Merge the release PR → release-plz publishes both crates to crates.io (core first, then bin) and pushes the `repograph-v*` tag only. The lib does **not** get a `repograph-core-v*` tag (`git_tag_enable = false` in `release-plz.toml`) — that tag would otherwise trigger a doomed cargo-dist run, since the lib has no artifacts to release.
 4. cargo-dist triggers on the `repograph-v*` tag:
     - Builds all target platforms
     - Publishes `repograph.rb` formula to `maikbasel/homebrew-tap` (shared with changelog-x)

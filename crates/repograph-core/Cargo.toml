@@ -10,10 +10,11 @@ homepage.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 
-# repograph-core is a library with no binaries. cargo-dist only builds the
-# `repograph` binary; this opt-out makes dist refuse the `repograph-core-v*`
-# tag that release-plz pushes for the lib instead of producing an empty
-# release.
+# repograph-core is a library with no binaries. This opt-out keeps cargo-dist
+# from trying to build artifacts for the lib when it processes the workspace on
+# the `repograph-v*` tag. (It does NOT stop a `repograph-core-v*` tag from
+# triggering a failing dist run — that tag is suppressed in release-plz.toml via
+# `git_tag_enable = false`.)
 [package.metadata.dist]
 dist = false
 
