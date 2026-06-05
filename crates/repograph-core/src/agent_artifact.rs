@@ -113,10 +113,21 @@ pub const DELIMITER_BEGIN: &str = "<!-- repograph:begin -->";
 /// HTML-comment marker closing the repograph-managed region of an artifact.
 pub const DELIMITER_END: &str = "<!-- repograph:end -->";
 
-/// One-line description used in every per-agent frontmatter block (Claude
-/// `SKILL.md`, Cursor `.mdc`) and in the `# repograph` heading body for the
-/// frontmatter-less writers.
-pub const SUMMARY: &str = "Cross-repo context for AI agents";
+/// Skill `description` rendered into the YAML frontmatter of the agents that
+/// have it (Claude `SKILL.md`, Cursor `.mdc`).
+///
+/// This string is the *only* signal the host sees when deciding whether to
+/// invoke the skill — the body (`BODY`) is loaded only *after* invocation, so
+/// trigger phrasing must live here. It therefore leads with concrete user
+/// phrasings ("switch to", "what's dirty", …) and an explicit prefer-over-
+/// `find`/`git` instruction rather than an abstract one-liner.
+///
+/// Rendered as a folded block scalar (`>-`, see [`render_artifact`]) so it can
+/// safely contain colons, quotes, and slashes without YAML-escaping. Keep it
+/// under the 1024-char skill-spec limit. Frontmatter-less writers (AGENTS.md,
+/// CONVENTIONS.md, .windsurfrules) use a `# repograph` heading instead and do
+/// not embed this string.
+pub const SUMMARY: &str = "Use when the user refers to one of their own git projects/repos by name and wants to act on it: switch / open / \"cd into\" a repo (\"switch to taverne\", \"open the api repo\", \"cd into <name>\"), list or compare their registered repos, check cross-repo git status (\"what's dirty\", \"what's in flight across my projects\", \"which repos have uncommitted changes\"), or pull a repo's CLAUDE.md / AGENTS.md content into the conversation. Maintains a local registry of git repositories and exposes their paths, branches, status, and agent docs as structured JSON. ALWAYS prefer this over manual `find` / `git` to resolve a named project to a filesystem path. Use it for which-repo / across-repos questions, not for the current directory's own `git status` (use plain `git` for that).";
 
 /// The single canonical instructional body, shared by every per-agent writer.
 ///
@@ -234,7 +245,7 @@ pub fn scope_is_meaningful(agent: AgentId) -> bool {
 pub fn render_artifact(agent: AgentId) -> String {
     match agent {
         AgentId::ClaudeCode => format!(
-            "---\nname: repograph\ndescription: {summary}\n---\n\n\
+            "---\nname: repograph\ndescription: >-\n  {summary}\n---\n\n\
              {begin}\n{body}\n{end}\n",
             summary = writer_summary(),
             begin = DELIMITER_BEGIN,
@@ -242,7 +253,7 @@ pub fn render_artifact(agent: AgentId) -> String {
             end = DELIMITER_END,
         ),
         AgentId::Cursor => format!(
-            "---\ndescription: {summary}\nglobs: []\n---\n\n\
+            "---\ndescription: >-\n  {summary}\nglobs: []\n---\n\n\
              {begin}\n{body}\n{end}\n",
             summary = writer_summary(),
             begin = DELIMITER_BEGIN,
@@ -686,8 +697,8 @@ mod tests {
             let out = render_artifact(AgentId::ClaudeCode);
             assert!(out.starts_with("---\nname: repograph\n"), "got: {out:?}");
             assert!(
-                out.contains(&format!("description: {SUMMARY}\n")),
-                "summary in frontmatter, got: {out:?}",
+                out.contains(&format!("description: >-\n  {SUMMARY}\n")),
+                "summary rendered as a folded block scalar in frontmatter, got: {out:?}",
             );
             assert!(out.contains(DELIMITER_BEGIN));
             assert!(out.contains(DELIMITER_END));

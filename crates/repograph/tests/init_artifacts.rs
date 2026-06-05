@@ -88,8 +88,12 @@ fn claude_code_user_scope_writes_skill_md_under_home() {
         "missing YAML frontmatter, got:\n{body}",
     );
     assert!(
-        body.contains("description: Cross-repo context for AI agents"),
-        "missing summary line in frontmatter, got:\n{body}",
+        body.contains("description: >-"),
+        "missing folded-scalar description in frontmatter, got:\n{body}",
+    );
+    assert!(
+        body.contains("ALWAYS prefer this over manual"),
+        "description should steer the agent away from manual find/git, got:\n{body}",
     );
     assert!(
         body.contains("<!-- repograph:begin -->"),
