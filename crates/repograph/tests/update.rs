@@ -2,10 +2,11 @@
 //!
 //! Each spec scenario in
 //! `openspec/changes/self-update/specs/self-update/spec.md` that can be
-//! exercised without network access is represented below. The live in-place
-//! upgrade (which requires GitHub + a real install receipt) is covered by the
-//! `#[ignore]` test at the bottom, kept out of the default run so CI stays
-//! hermetic and zero-network.
+//! exercised without network access is represented below. The networked paths
+//! (live version query, in-place upgrade) require a GitHub endpoint and a real
+//! install receipt; covering them hermetically needs a mocked release server
+//! (`REPOGRAPH_INSTALLER_GHE_BASE_URL` redirects axoupdater at a local mock) and
+//! is tracked as follow-up — CI here stays zero-network by construction.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -104,20 +105,4 @@ fn notifier_suppressed_by_cross_tool_env_optout() {
         .assert()
         .success()
         .stderr(predicate::str::contains("available").not());
-}
-
-/// Live end-to-end check against GitHub Releases. Opt-in only — run with
-/// `cargo test -p repograph --test update -- --ignored`. Requires network.
-#[test]
-#[ignore = "hits GitHub Releases; run manually with --ignored"]
-fn live_update_check_against_github() {
-    // No receipt in CI → this still resolves to the defer path; on a real
-    // installer-based install it would report availability. Either way it must
-    // exit 0 and never write to stdout.
-    let home = TempDir::new().unwrap();
-    isolated_update_cmd(home.path())
-        .arg("--check")
-        .assert()
-        .success()
-        .stdout(predicate::str::is_empty());
 }
