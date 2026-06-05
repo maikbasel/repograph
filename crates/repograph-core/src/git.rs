@@ -179,7 +179,7 @@ pub fn inspect(name: &str, path: &Path, fetch: bool) -> RepoStatus {
         }
         Ok(head) => {
             if head.is_branch() {
-                let branch_name = head.shorthand().map(ToString::to_string);
+                let branch_name = head.shorthand().ok().map(ToString::to_string);
                 status.branch.clone_from(&branch_name);
                 status.state = if status.dirty {
                     RepoState::Dirty
@@ -277,12 +277,12 @@ const fn classify(status: git2::Status) -> (bool, bool, bool) {
 fn upstream_full_ref(repo: &git2::Repository, branch: &str) -> Option<String> {
     let local_ref = format!("refs/heads/{branch}");
     let upstream_buf = repo.branch_upstream_name(&local_ref).ok()?;
-    upstream_buf.as_str().map(ToString::to_string)
+    upstream_buf.as_str().ok().map(ToString::to_string)
 }
 
 fn upstream_short(repo: &git2::Repository, full_ref: &str) -> Option<String> {
     let reference = repo.find_reference(full_ref).ok()?;
-    reference.shorthand().map(ToString::to_string)
+    reference.shorthand().ok().map(ToString::to_string)
 }
 
 fn compute_ahead_behind(

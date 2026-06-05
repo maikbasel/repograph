@@ -167,7 +167,7 @@ fn read_branch(repo_path: &Path) -> (Option<String>, Option<String>) {
     }
 
     match repo.head() {
-        Ok(head) if head.is_branch() => (head.shorthand().map(ToString::to_string), None),
+        Ok(head) if head.is_branch() => (head.shorthand().ok().map(ToString::to_string), None),
         Ok(_) => (None, None), // detached
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => (None, None),
         Err(e) => (None, Some(format!("could not read HEAD: {}", e.message()))),
