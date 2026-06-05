@@ -369,14 +369,26 @@ mod tests {
 
     #[test]
     fn cache_fresh_within_ttl() {
-        assert!(cache_is_fresh(1_000, 1_000 + CACHE_TTL_SECS - 1, CACHE_TTL_SECS));
+        assert!(cache_is_fresh(
+            1_000,
+            1_000 + CACHE_TTL_SECS - 1,
+            CACHE_TTL_SECS
+        ));
         assert!(cache_is_fresh(1_000, 1_000, CACHE_TTL_SECS)); // same instant
     }
 
     #[test]
     fn cache_stale_at_or_past_ttl() {
-        assert!(!cache_is_fresh(1_000, 1_000 + CACHE_TTL_SECS, CACHE_TTL_SECS));
-        assert!(!cache_is_fresh(1_000, 1_000 + CACHE_TTL_SECS + 1, CACHE_TTL_SECS));
+        assert!(!cache_is_fresh(
+            1_000,
+            1_000 + CACHE_TTL_SECS,
+            CACHE_TTL_SECS
+        ));
+        assert!(!cache_is_fresh(
+            1_000,
+            1_000 + CACHE_TTL_SECS + 1,
+            CACHE_TTL_SECS
+        ));
     }
 
     #[test]

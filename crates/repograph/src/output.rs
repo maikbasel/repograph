@@ -606,7 +606,10 @@ pub fn render_update_outcome<W: Write>(
     use crate::selfupdate::UpdateOutcome;
     let current = env!("CARGO_PKG_VERSION");
     match outcome {
-        UpdateOutcome::Updated { from: Some(from), to } => {
+        UpdateOutcome::Updated {
+            from: Some(from),
+            to,
+        } => {
             writeln!(writer, "Updated repograph {from} → {to}.")
         }
         UpdateOutcome::Updated { from: None, to } => {
