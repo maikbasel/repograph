@@ -84,14 +84,18 @@ fn main() -> ExitCode {
         Command::Workspace(args) => commands::workspace::run(args, &config_dir),
     };
 
+    let succeeded = result.is_ok();
     let exit = match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => report(&e),
     };
 
     // Passive update nudge — runs after the command's work, never alters the
-    // exit code, and is fully gated + fail-silent inside `notify`.
-    selfupdate::notify(command_is_update);
+    // exit code, and is fully gated + fail-silent inside `notify`. Suppressed on
+    // a failed command so the nudge never stacks on top of an error message.
+    if succeeded {
+        selfupdate::notify(command_is_update);
+    }
 
     exit
 }

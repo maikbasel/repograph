@@ -13,6 +13,7 @@
 use std::error::Error;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use axoupdater::{AxoUpdater, AxoupdateError, ReleaseSource, ReleaseSourceType, Version};
 use repograph_core::RepographError;
@@ -47,6 +48,13 @@ pub const NO_UPDATE_NOTIFIER_ENV: &str = "NO_UPDATE_NOTIFIER";
 /// Throttle window for the passive version check: contact the network at most
 /// once per this many seconds.
 pub const CACHE_TTL_SECS: i64 = 24 * 60 * 60;
+
+/// Bound on the version-availability network query so a slow, captive, or
+/// black-holed connection can't hang the CLI. Applies to the "is there a newer
+/// version?" probe used by both the passive notifier and `update --check`; the
+/// binary download in [`run_update`] is deliberately left unbounded, since a
+/// large transfer legitimately takes longer than this.
+pub const QUERY_TIMEOUT_SECS: u64 = 3;
 
 /// Disposable on-disk cache that throttles the notifier's network checks. Never
 /// authoritative — a missing or malformed file is simply a cache miss.
@@ -142,6 +150,27 @@ fn runtime() -> Result<tokio::runtime::Runtime, RepographError> {
         .map_err(|e| RepographError::UpdateFailed(format!("could not start async runtime: {e}")))
 }
 
+/// Drive a version-availability query on `rt`, bounding it with
+/// [`QUERY_TIMEOUT_SECS`] so a stalled connection can't hang the CLI. The
+/// borrowed `&Version` is cloned out before the borrow of the updater ends, so
+/// callers get an owned `Option<Version>`. A timeout maps to
+/// [`RepographError::UpdateFailed`] — the notifier swallows it, `update --check`
+/// surfaces it.
+fn query_with_timeout<'a>(
+    rt: &tokio::runtime::Runtime,
+    fut: impl std::future::Future<Output = Result<Option<&'a Version>, AxoupdateError>>,
+) -> Result<Option<Version>, RepographError> {
+    rt.block_on(async {
+        match tokio::time::timeout(Duration::from_secs(QUERY_TIMEOUT_SECS), fut).await {
+            Ok(Ok(latest)) => Ok(latest.cloned()),
+            Ok(Err(e)) => Err(RepographError::UpdateFailed(e.to_string())),
+            Err(_) => Err(RepographError::UpdateFailed(format!(
+                "version check timed out after {QUERY_TIMEOUT_SECS}s"
+            ))),
+        }
+    })
+}
+
 /// Query the latest available version from GitHub Releases, comparing against
 /// the running version. Returns the latest version when one is available, or
 /// `None` when the running build is current.
@@ -159,11 +188,7 @@ pub fn query_latest() -> Result<Option<Version>, RepographError> {
         .map_err(|e| RepographError::UpdateFailed(e.to_string()))?;
 
     let rt = runtime()?;
-    let latest = rt
-        .block_on(updater.query_new_version())
-        .map_err(|e| RepographError::UpdateFailed(e.to_string()))?
-        .cloned();
-    Ok(latest)
+    query_with_timeout(&rt, updater.query_new_version())
 }
 
 /// Run the update flow: load the install receipt, then either report (`check_only`)
@@ -184,22 +209,12 @@ pub fn run_update(check_only: bool) -> Result<UpdateOutcome, RepographError> {
     let rt = runtime()?;
 
     if check_only {
-        let latest = rt
-            .block_on(updater.query_new_version())
-            .map_err(|e| RepographError::UpdateFailed(e.to_string()))?
-            .cloned();
+        let latest = query_with_timeout(&rt, updater.query_new_version())?;
         return Ok(latest.map_or(UpdateOutcome::AlreadyCurrent, |version| {
             UpdateOutcome::UpdateAvailable {
                 latest: version.to_string(),
             }
         }));
-    }
-
-    let needed = rt
-        .block_on(updater.is_update_needed())
-        .map_err(|e| RepographError::UpdateFailed(e.to_string()))?;
-    if !needed {
-        return Ok(UpdateOutcome::AlreadyCurrent);
     }
 
     // Resolve the install location up front so a permission failure can name it.
@@ -208,6 +223,11 @@ pub fn run_update(check_only: bool) -> Result<UpdateOutcome, RepographError> {
         .ok()
         .map(|p| p.as_std_path().to_path_buf());
 
+    // `run()` already short-circuits to `Ok(None)` when the build is current
+    // (mapped to `AlreadyCurrent` below), so a separate `is_update_needed()`
+    // pre-check would only add a second network round-trip. The binary download
+    // here is intentionally unbounded — unlike the version probe above, a large
+    // transfer legitimately takes longer than `QUERY_TIMEOUT_SECS`.
     match rt.block_on(updater.run()) {
         Ok(Some(result)) => Ok(UpdateOutcome::Updated {
             from: result.old_version.map(|v| v.to_string()),
