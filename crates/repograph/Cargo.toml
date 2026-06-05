@@ -30,7 +30,7 @@ indicatif = "0.18"
 is-terminal = "0.4"
 rayon = "1"
 cliclack = "=0.5.4"
-dirs = "5"
+dirs = "6"
 fs-err = { workspace = true }
 # Self-update: axoupdater drives receipt-aware in-place upgrades and the version
 # query for the passive notifier. `default-features = false` keeps the `blocking`
