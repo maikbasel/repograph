@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/maikbasel/repograph/compare/repograph-v0.2.1...repograph-v0.3.0) - 2026-06-05
+
+### Added
+
+- *(update)* add `repograph update` command and passive update notifier ([#10](https://github.com/maikbasel/repograph/pull/10))
+
+### Fixed
+
+- *(init)* make generated skill description discoverable
+- *(deps)* update rust-dependencies
+
 ## [0.2.1](https://github.com/maikbasel/repograph/compare/repograph-v0.2.0...repograph-v0.2.1) - 2026-06-04
 
 ### Fixed
