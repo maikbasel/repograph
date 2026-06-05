@@ -9,4 +9,5 @@ pub mod list;
 pub mod remove;
 pub mod status;
 pub mod switch;
+pub mod update;
 pub mod workspace;
