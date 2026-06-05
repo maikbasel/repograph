@@ -14,6 +14,13 @@ rust-version.workspace = true
 name = "repograph"
 path = "src/main.rs"
 
+# `reqwest` is a feature-only dependency — it is never imported in source, so
+# cargo-machete's source scan flags it as unused. It is declared solely to union
+# the rustls TLS feature onto axoasset's transitive reqwest (see the dependency
+# comment below), so the false positive is suppressed here rather than dropped.
+[package.metadata.cargo-machete]
+ignored = ["reqwest"]
+
 [dependencies]
 repograph-core = { path = "../repograph-core", version = "0.2.1" }
 clap = { version = "4", features = ["derive", "env"] }
