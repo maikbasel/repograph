@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/maikbasel/repograph/compare/repograph-v0.3.0...repograph-v0.3.1) - 2026-06-13
+
+### Fixed
+
+- *(deps)* update rust crate dirs to v6 ([#5](https://github.com/maikbasel/repograph/pull/5))
+- *(formula)* shorten repograph description to pass brew audit
+
 ## [0.3.0](https://github.com/maikbasel/repograph/compare/repograph-v0.2.1...repograph-v0.3.0) - 2026-06-05
 
 ### Added
