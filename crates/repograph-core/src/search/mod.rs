@@ -242,14 +242,14 @@ pub fn search(
 
 /// Compute the [`IndexStatus`] for `repos`.
 ///
-/// Never errors on a missing or unreadable index — those are reported via the
-/// `present`/`readable` flags so `doctor` can surface them as warnings without
-/// aborting.
+/// Never errors: a missing, unreadable, or mid-inspection-failing index is
+/// reported via the `present`/`readable` flags so `doctor` surfaces it as a
+/// warning rather than aborting the whole report.
 ///
 /// # Errors
 ///
-/// Returns [`RepographError::Index`] only if the (readable) index fails a query
-/// mid-inspection.
+/// Returns `Ok` in all cases; the `Result` is retained for signature stability
+/// with the other core entry points the binary calls with `?`.
 pub fn index_health(
     data_dir: &Path,
     repos: &[(String, PathBuf)],
@@ -269,7 +269,15 @@ pub fn index_health(
             });
         }
     };
-    let commits = store.indexed_commits()?;
+    // A present index that opens but fails a query mid-inspection (corruption,
+    // a partial write) is "present but not readable", not a hard error.
+    let Ok(commits) = store.indexed_commits() else {
+        return Ok(IndexStatus {
+            present: true,
+            readable: false,
+            stale: Vec::new(),
+        });
+    };
     let mut stale = Vec::new();
     for (name, path) in repos {
         let current = git2::Repository::open(path)

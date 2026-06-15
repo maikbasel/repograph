@@ -89,10 +89,12 @@ impl Store {
         Ok(store)
     }
 
-    /// Open an *existing* index for reading. Returns
-    /// [`RepographError::IndexMissing`] (exit 3) when the file does not exist,
-    /// and [`RepographError::Index`] (exit 1) when it exists but cannot be
-    /// opened or is the wrong schema.
+    /// Open an *existing* index read-only. Both callers (`search`,
+    /// `index_health`) only query, so a read-only handle avoids write-lock
+    /// contention with a concurrent `repograph index` and works on read-only
+    /// mounts. Returns [`RepographError::IndexMissing`] (exit 3) when the file
+    /// does not exist, and [`RepographError::Index`] (exit 1) when it exists but
+    /// cannot be opened or is the wrong schema.
     ///
     /// # Errors
     ///
@@ -101,7 +103,7 @@ impl Store {
         if !db_path.is_file() {
             return Err(RepographError::IndexMissing);
         }
-        let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let store = Self { conn };
         let version: Option<String> = store.meta_get("schema_version")?;
         match version.as_deref() {
@@ -263,6 +265,17 @@ impl Store {
     ) -> Result<RepoStats, RepographError> {
         let mut stats = RepoStats::default();
         let existing = self.existing_hashes(repo)?;
+        let embedding = embedder.is_some();
+        // When embedding, a file whose content is unchanged but which carries no
+        // stored vectors must still be reprocessed. Otherwise upgrading a lexical
+        // index with `--semantic` (or switching models, which drops every vector
+        // via `ensure_model`) would skip all unchanged files and leave the index
+        // permanently half-embedded — the `--semantic` flag would silently no-op.
+        let vectored: HashSet<String> = if embedding {
+            self.paths_with_vectors(repo)?
+        } else {
+            HashSet::new()
+        };
         let current: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
 
         let tx = self.conn.transaction()?;
@@ -279,7 +292,9 @@ impl Store {
         }
 
         for f in files {
-            if existing.get(&f.path) == Some(&f.content_hash) {
+            let unchanged = existing.get(&f.path) == Some(&f.content_hash);
+            let needs_vectors = embedding && !vectored.contains(&f.path);
+            if unchanged && !needs_vectors {
                 stats.files_unchanged += 1;
                 continue;
             }
@@ -310,6 +325,21 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(stats)
+    }
+
+    /// Repo-relative paths that currently have at least one stored embedding —
+    /// used to detect files that are lexically indexed but not yet vectored.
+    fn paths_with_vectors(&self, repo: &str) -> Result<HashSet<String>, RepographError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT c.path FROM chunks c JOIN vectors v ON v.chunk_id = c.id
+             WHERE c.repo = ?1",
+        )?;
+        let rows = stmt.query_map([repo], |r| r.get::<_, String>(0))?;
+        let mut out = HashSet::new();
+        for row in rows {
+            out.insert(row?);
+        }
+        Ok(out)
     }
 
     fn existing_hashes(&self, repo: &str) -> Result<HashMap<String, String>, RepographError> {
@@ -610,10 +640,32 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::float_cmp)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::float_cmp,
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::unnecessary_literal_bound
+    )]
     use super::*;
     use crate::search::chunk::TrackedFile;
     use tempfile::TempDir;
+
+    /// Deterministic in-memory embedder for exercising the vector path without
+    /// the `semantic` feature / a real model download.
+    struct StubEmbedder;
+    impl Embedder for StubEmbedder {
+        fn model_id(&self) -> &str {
+            "stub-v1"
+        }
+        fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .map(|t| vec![(t.len() % 7) as f32 + 1.0, 1.0, 0.5])
+                .collect())
+        }
+    }
 
     fn tf(path: &str, text: &str) -> TrackedFile {
         TrackedFile {
@@ -691,6 +743,48 @@ mod tests {
             !rows.values().any(|r| r.content.contains("fn second()")),
             "stale chunk purged"
         );
+    }
+
+    #[test]
+    fn semantic_upgrade_embeds_previously_lexical_files() {
+        let (_tmp, mut store) = build_store();
+        let files = vec![tf("a.rs", "fn a() {}\n"), tf("b.rs", "fn b() {}\n")];
+
+        // First pass is lexical-only: no embedder, no vectors written.
+        store.reconcile_repo("r", &files, None, None).unwrap();
+        assert!(
+            !store.has_vectors().unwrap(),
+            "lexical build wrote no vectors"
+        );
+
+        // Re-run with an embedder over the *same, unchanged* files. Without the
+        // missing-vector check this would skip every file and write no vectors.
+        let mut emb = StubEmbedder;
+        store.ensure_model(emb.model_id()).unwrap();
+        let stats = store
+            .reconcile_repo("r", &files, None, Some(&mut emb))
+            .unwrap();
+        assert_eq!(
+            stats.files_indexed, 2,
+            "unchanged-but-unvectored files are reprocessed to embed them"
+        );
+        assert_eq!(stats.files_unchanged, 0);
+        assert!(
+            store.has_vectors().unwrap(),
+            "vectors present after the semantic upgrade"
+        );
+
+        // A third pass (still embedding) now finds vectors for every file and
+        // skips them — no needless re-embedding once the index is whole.
+        let mut emb2 = StubEmbedder;
+        let stats2 = store
+            .reconcile_repo("r", &files, None, Some(&mut emb2))
+            .unwrap();
+        assert_eq!(
+            stats2.files_unchanged, 2,
+            "fully-vectored files are skipped"
+        );
+        assert_eq!(stats2.files_indexed, 0);
     }
 
     #[test]
