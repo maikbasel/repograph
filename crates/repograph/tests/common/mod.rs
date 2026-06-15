@@ -20,7 +20,11 @@ pub fn repograph_cmd(config_dir: &Path) -> Command {
     );
     let mut cmd = Command::cargo_bin("repograph").expect("repograph binary built");
     cmd.env_remove("REPOGRAPH_CONFIG_DIR")
-        .env("REPOGRAPH_CONFIG_DIR", config_dir);
+        .env("REPOGRAPH_CONFIG_DIR", config_dir)
+        // Keep the search index hermetic: never touch the real data dir. Index
+        // artifacts live alongside the throwaway config dir for the test's life.
+        .env_remove("REPOGRAPH_DATA_DIR")
+        .env("REPOGRAPH_DATA_DIR", config_dir);
     cmd
 }
 
@@ -34,6 +38,8 @@ pub fn repograph_cmd_with_flag(config_dir: &Path) -> Command {
     );
     let mut cmd = Command::cargo_bin("repograph").expect("repograph binary built");
     cmd.env_remove("REPOGRAPH_CONFIG_DIR")
+        .env_remove("REPOGRAPH_DATA_DIR")
+        .env("REPOGRAPH_DATA_DIR", config_dir)
         .arg("--config-dir")
         .arg(config_dir);
     cmd
@@ -107,6 +113,70 @@ pub fn parse_status_json(stdout: &[u8]) -> Vec<serde_json::Value> {
         .and_then(serde_json::Value::as_array)
         .cloned()
         .expect("envelope contains a `repos` array")
+}
+
+/// Initialize a git repo at `parent.join(name)` and commit the given
+/// `(relative_path, content)` files so they are tracked. Returns the
+/// canonicalized absolute path. Used by search/index tests that need real
+/// tracked content to chunk.
+pub fn fixture_git_repo_with_files(parent: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let path = parent.join(name);
+    std::fs::create_dir_all(&path).expect("create fixture dir");
+    let repo = Repository::init(&path).expect("git init");
+    for (rel, content) in files {
+        let abs = path.join(rel);
+        if let Some(p) = abs.parent() {
+            std::fs::create_dir_all(p).expect("create file parent");
+        }
+        std::fs::write(&abs, content).expect("write tracked file");
+    }
+    let sig = Signature::now("Test", "test@example.com").expect("signature");
+    let tree_id = {
+        let mut index = repo.index().expect("index");
+        index
+            .add_all(["*"], IndexAddOption::DEFAULT, None)
+            .expect("add files");
+        index.write().expect("write index");
+        index.write_tree().expect("write tree")
+    };
+    {
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        repo.commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[])
+            .expect("seed commit");
+    }
+    drop(repo);
+    repograph_core::path::canonicalize(&path).expect("canonicalize fixture path")
+}
+
+/// Commit `(relative_path, content)` files into an existing repo at `path` as a
+/// follow-up commit (used to make a repo stale vs its indexed commit, or to
+/// add/modify tracked content between index runs).
+pub fn commit_files(path: &Path, message: &str, files: &[(&str, &str)]) {
+    let repo = Repository::open(path).expect("open repo for commit");
+    for (rel, content) in files {
+        let abs = path.join(rel);
+        if let Some(p) = abs.parent() {
+            std::fs::create_dir_all(p).expect("create file parent");
+        }
+        std::fs::write(&abs, content).expect("write file");
+    }
+    let sig = Signature::now("Test", "test@example.com").expect("signature");
+    let tree_id = {
+        let mut index = repo.index().expect("index");
+        index
+            .add_all(["*"], IndexAddOption::DEFAULT, None)
+            .expect("add files");
+        index.write().expect("write index");
+        index.write_tree().expect("write tree")
+    };
+    let tree = repo.find_tree(tree_id).expect("find tree");
+    let parent_commit = repo
+        .head()
+        .expect("HEAD")
+        .peel_to_commit()
+        .expect("parent commit");
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent_commit])
+        .expect("follow-up commit");
 }
 
 /// Initialize a bare git repository at `parent.join(name)`. Returns the

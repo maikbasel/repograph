@@ -110,7 +110,9 @@ In an interactive terminal, repograph also prints a one-line notice on **stderr*
 | `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
 | `repograph completions <shell>` | Emit a static completion script for `bash`, `zsh`, `fish`, `powershell`, or `elvish` on stdout. Generated against the live `Cli` so the script never drifts from the actual command surface. |
 | `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
-| `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
+| `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config, and search-index freshness. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
+| `repograph index [--workspace <name>] [--semantic]` | Build or refresh the cross-repo search index over the git-tracked files of registered repos (or one workspace). Git-aware and incremental: only changed files are re-processed, removed files are purged. `--semantic` adds local embeddings (requires a build with the `semantic` feature; otherwise lexical-only with a stderr notice). No stdout payload; a summary and warnings go to stderr. |
+| `repograph find "<query>" [--workspace <name>] [--limit <n>] [--semantic] [--json]` | Find code across all registered repos (or one workspace) by meaning or keyword — locate a reference implementation when you're not sure which repo holds it. Hybrid retrieval (BM25 + optional semantic). Ranked `comfy-table` on TTY; stable `{ schema_version, query, hits: [...] }` JSON envelope when piped or `--json`. Empty results are success (exit 0); a never-built index is exit 3. |
 | `repograph init` | Interactive setup: pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. |
@@ -127,6 +129,8 @@ In an interactive terminal, repograph also prints a one-line notice on **stderr*
 `add` accepts `--name`, `--description`, and `--stack <a,b,c>` (comma-separated tags). When `--name` is omitted, the path's basename is used.
 
 A global `--config-dir <PATH>` flag overrides the default config directory. The resolution precedence is `--config-dir` > `REPOGRAPH_CONFIG_DIR` env var > the platform default (`$XDG_CONFIG_HOME/repograph`, `~/Library/Application Support/repograph`, `%APPDATA%\repograph`).
+
+A parallel global `--data-dir <PATH>` flag overrides where the search index (`index.db`) and the embedding-model cache live, with precedence `--data-dir` > `REPOGRAPH_DATA_DIR` env var > the platform data default (`$XDG_DATA_HOME/repograph`, `~/Library/Application Support/repograph`, `%APPDATA%\repograph`). The index is a derived, disposable artifact — deleting it just means the next `repograph index` rebuilds from scratch.
 
 ### Sample config
 
@@ -257,6 +261,20 @@ Empty registry: `{ "repos": [] }`.
 ```
 
 `dangling` is always present (even when empty), so agent consumers can detect drift without a key-existence check. A dangling member also produces a `WARN` line on stderr.
+
+`repograph find "<query>" --json` emits a stable, `schema_version`-carrying envelope. `hits` is always an array (empty on no match); each hit names the repo, the repo-relative path, the 1-based start line, a fused relevance score, and a snippet:
+
+```json
+{
+  "schema_version": 1,
+  "query": "jwt refresh token rotation",
+  "hits": [
+    { "repo": "api", "path": "src/auth/token.rs", "line": 42, "score": 0.0312, "snippet": "pub fn rotate_refresh_token(..) { .. }" }
+  ]
+}
+```
+
+When `--semantic` is requested but the binary was built without the `semantic` feature (or the index has no embeddings), `find` degrades to keyword-only retrieval and prints a `note:` line to stderr — stdout stays pure data.
 
 `repograph status --json` emits a `repos`-keyed envelope of richer per-repo status entries. The `error` field is always present (`null` on healthy rows) so consumers can branch on `repo.error != null` without a key-existence check:
 
@@ -470,9 +488,9 @@ Restricts the registry listing to live members of `acme`. Dangling members are s
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General failure (malformed config, runtime usage error) |
+| 1 | General failure (malformed config, runtime usage error, corrupt/unreadable search index) |
 | 2 | CLI argument error (clap usage); also: `repograph init` in non-TTY without `--no-prompt --agents`; `--no-prompt` with a scope-bearing agent (`claude-code`, `windsurf`) and no `--scope`; agents-not-configured in non-TTY for agent-consuming commands |
-| 3 | Resource not found (path is not a git repo, name not registered) |
+| 3 | Resource not found (path is not a git repo, name not registered, or `repograph find` run before any index was built) |
 | 4 | Permission denied (cannot read or write the config file) |
 | 5 | Conflict (name or path already registered) |
 
