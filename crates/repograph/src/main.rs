@@ -21,6 +21,11 @@ pub(crate) struct Cli {
     #[arg(long, global = true, env = "REPOGRAPH_CONFIG_DIR", value_name = "PATH")]
     config_dir: Option<PathBuf>,
 
+    /// Override the data directory (where the search index lives). Resolution
+    /// precedence: `--data-dir` > `REPOGRAPH_DATA_DIR` > platform default.
+    #[arg(long, global = true, env = "REPOGRAPH_DATA_DIR", value_name = "PATH")]
+    data_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -39,6 +44,12 @@ enum Command {
     /// Run a read-only health check over the config and every registered repo.
     /// JSON when piped or `--json`; coloured table when stdout is a TTY.
     Doctor(commands::doctor::Args),
+    /// Find code across all registered repos by meaning or keyword — locate a
+    /// reference implementation when you're not sure which repo it's in.
+    Find(commands::find::Args),
+    /// Build or refresh the cross-repo search index. Git-aware and incremental:
+    /// only changed files are re-processed.
+    Index(commands::index::Args),
     /// Interactive setup — pick the agent toolchain(s) you use; optionally
     /// register a repo and assign it to a workspace.
     Init(commands::init::Args),
@@ -70,11 +81,21 @@ fn main() -> ExitCode {
 
     let command_is_update = matches!(cli.command, Command::Update(_));
 
+    // The data dir is only needed by index/find/doctor; resolve lazily so a
+    // platform with no data dir still runs every other command.
+    let data_dir = || resolve_data_dir(cli.data_dir.clone(), default_data_dir());
+
     let result = match cli.command {
         Command::Add(args) => commands::add::run(args, &config_dir),
         Command::Completions(args) => commands::completions::run(&args),
         Command::Context(args) => commands::context::run(&args, &config_dir),
-        Command::Doctor(args) => commands::doctor::run(&args, &config_dir),
+        Command::Doctor(args) => {
+            data_dir().and_then(|d| commands::doctor::run(&args, &config_dir, &d))
+        }
+        Command::Find(args) => data_dir().and_then(|d| commands::find::run(&args, &config_dir, &d)),
+        Command::Index(args) => {
+            data_dir().and_then(|d| commands::index::run(&args, &config_dir, &d))
+        }
         Command::Init(args) => commands::init::run(&args, &config_dir),
         Command::List(args) => commands::list::run(&args, &config_dir),
         Command::Remove(args) => commands::remove::run(&args, &config_dir),
@@ -136,6 +157,30 @@ fn resolve_config_dir(
         RepographError::UsageError(
             "no config directory available; pass --config-dir or set REPOGRAPH_CONFIG_DIR"
                 .to_string(),
+        )
+    })
+}
+
+/// Platform-default data directory: `dirs::data_dir() / "repograph"`. `None`
+/// when no platform default exists; the binary surfaces this as a usage error
+/// guiding the user to `--data-dir`.
+fn default_data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|d| d.join("repograph"))
+}
+
+/// Walk the precedence chain for the data directory: `override` (CLI flag or
+/// `REPOGRAPH_DATA_DIR` via clap) > platform default. Returns a usage error
+/// when neither is available.
+fn resolve_data_dir(
+    override_path: Option<PathBuf>,
+    default: Option<PathBuf>,
+) -> Result<PathBuf, RepographError> {
+    if let Some(p) = override_path {
+        return Ok(p);
+    }
+    default.ok_or_else(|| {
+        RepographError::UsageError(
+            "no data directory available; pass --data-dir or set REPOGRAPH_DATA_DIR".to_string(),
         )
     })
 }

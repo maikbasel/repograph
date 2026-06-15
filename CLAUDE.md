@@ -103,6 +103,7 @@ cargo dist build   # local test of release artifacts
 - `crates/repograph-core/src/config.rs` — config model and persistence
 - `crates/repograph-core/src/git.rs` — git2 introspection helpers
 - `crates/repograph-core/src/context.rs` — Context aggregation logic
+- `crates/repograph-core/src/search/` — cross-repo search engine: chunking, the SQLite index (FTS5 + vectors), and hybrid retrieval. `embed.rs` (local embeddings) is behind the optional `semantic` cargo feature; the lexical path is always on.
 - `crates/repograph-core/src/error.rs` — `RepographError` (thiserror)
 - `crates/repograph/src/` — CLI binary (presentation only)
 - `crates/repograph/src/main.rs` — entrypoint, tracing init, clap dispatch
@@ -135,7 +136,8 @@ cargo dist build   # local test of release artifacts
 - The workspace splits cleanly along the presentation/logic boundary: `repograph-core` owns domain types and adapters (no clap, no terminal output, no `println!`); the `repograph` binary owns presentation (clap parsing, `OutputMode`, table/JSON rendering) and depends on `repograph-core`. Agent integration ships as native per-agent instruction artifacts written by `repograph init` (see the `agent-skills` capability) — not via a separate binary.
 - Each subcommand lives in `crates/repograph/src/commands/<name>.rs` with an `Args` struct (clap derive) and a `run(args: Args) -> Result<(), RepographError>` function
 - Config model (`Config`, `Repo`, `Workspace`) lives in `crates/repograph-core/src/config.rs`, serialized via `serde` + `toml`
-- All git operations isolated in `crates/repograph-core/src/git.rs` — no `git2` imports outside the core crate
+- All git operations isolated in `crates/repograph-core/src/git.rs` and `crates/repograph-core/src/search/` — no `git2` imports outside the core crate
+- Search index persists to `dirs::data_dir()/repograph/index.db` (data dir, separate from the config dir); the binary resolves the data dir via `--data-dir` / `REPOGRAPH_DATA_DIR` and passes a path to core, mirroring how `--config-dir` is threaded
 - Output rendering in `crates/repograph/src/output.rs` — TTY check once, pass an `OutputMode` enum downstream
 - Error type in `crates/repograph-core/src/error.rs` — single `RepographError` enum with `thiserror`, re-exported from `lib.rs`
 
@@ -172,6 +174,7 @@ cargo dist build   # local test of release artifacts
 | `Context`        | Aggregated agent-facing output for one or more repos: paths, branches, status, inlined `CLAUDE.md` content, ready for an LLM prompt      |
 | `OutputMode`     | Enum capturing the runtime decision between TTY (table via `comfy-table`) and non-TTY / `--json` output — checked once at command entry  |
 | `RepographError` | Single `thiserror`-derived enum used across all commands; each variant maps to a documented exit code (see contract above)               |
+| Search index     | Central SQLite DB (one `repo` column, spans all repos) built by `repograph index` and queried by `repograph find`. Hybrid retrieval: BM25 (FTS5) fused with optional semantic vectors via reciprocal-rank fusion. Derived and disposable. |
 
 ---
 

@@ -11,6 +11,7 @@ repograph is a CLI tool that maintains a registry of local git repositories and 
 - The user asks for status across projects: "which repos have uncommitted changes", "what's dirty right now".
 - The user wants the agent-doc content for one or more repos pulled into the conversation: "load the CLAUDE.md for repo X", "give me the AGENTS.md for workspace acme".
 - The user reports something feels off with their setup ("my agent isn't seeing X"): run `repograph doctor --json` to surface health-check findings before guessing.
+- The user says they've solved something before and wants the prior art — "I did this in another repo", "this is already solved somewhere", "use repo X as reference" — even when they can't name the repo. Run `repograph find "<description or symbol>" --json` to locate the reference implementation across every registered repo before re-implementing. This is the cross-repo precedent search; it is distinct from inspecting the current repo (use plain git for that).
 
 ## Commands
 
@@ -20,7 +21,11 @@ repograph is a CLI tool that maintains a registry of local git repositories and 
 | Show per-repo git status              | `repograph status --json`     |
 | Build full agent context for repos    | `repograph context --json`    |
 | Resolve a repo to a `cd` target       | `repograph switch <name>`     |
+| Find a reference impl across repos    | `repograph find "<query>" --json` |
+| Build/refresh the search index        | `repograph index`             |
 | Diagnose registry health              | `repograph doctor --json`     |
+
+`repograph find` searches a local index built by `repograph index`; if a search reports no index, ask the user to run `repograph index` (it is a mutating-ish, potentially slow operation, so don't run it unprompted). Each hit carries `repo`, `path`, `line`, `score`, and a `snippet`.
 
 The `--json` form is the agent-facing surface; always pass it. Every command has a TTY-friendly table form for humans, but agents should consume JSON. `repograph switch <name>` prints exactly `cd <quoted-path>` on stdout; use it to ground filesystem operations to a known repo without rebuilding the path yourself.
 

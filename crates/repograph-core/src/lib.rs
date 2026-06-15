@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod error;
 pub mod git;
 pub mod path;
+pub mod search;
 
 pub use agent_artifact::{
     ArtifactResult, BODY as AGENT_ARTIFACT_BODY, DELIMITER_BEGIN, DELIMITER_END,
@@ -29,6 +30,10 @@ pub use context::{
 pub use doctor::{Check, DOCTOR_SCHEMA_VERSION, DoctorReport, Finding, Severity, Summary};
 pub use error::RepographError;
 pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};
+pub use search::{
+    FIND_SCHEMA_VERSION, Hit, INDEX_DB_NAME, IndexOutcome, IndexStatus, MODEL_SUBDIR,
+    SearchOutcome, build_index, index_db_path, index_health, model_cache_dir, search,
+};
 
 /// Crate version, sourced from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

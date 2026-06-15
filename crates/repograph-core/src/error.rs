@@ -80,6 +80,26 @@ pub enum RepographError {
     /// instead, so this variant is reserved for general update failures.
     #[error("update failed: {0}")]
     UpdateFailed(String),
+
+    /// `repograph find` was invoked before any search index was built. The
+    /// index is a "resource" that does not exist yet, so this maps to exit
+    /// code `3` (not-found), mirroring a missing repo/workspace. The Display
+    /// text guides the user to `repograph index`.
+    #[error("no search index found — run `repograph index` first")]
+    IndexMissing,
+
+    /// The search index database is present but could not be opened, read, or
+    /// queried (corruption, a schema the binary can't drive, a failed SQL
+    /// statement). Maps to exit code `1`. A missing index is
+    /// [`RepographError::IndexMissing`] (exit `3`) instead.
+    #[error("search index error: {0}")]
+    Index(String),
+}
+
+impl From<rusqlite::Error> for RepographError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Index(e.to_string())
+    }
 }
 
 impl RepographError {
@@ -90,14 +110,15 @@ impl RepographError {
         match self {
             Self::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied => 4,
             Self::PermissionDenied { .. } => 4,
-            Self::GitOpen { .. } | Self::NotFound { .. } => 3,
+            Self::GitOpen { .. } | Self::NotFound { .. } | Self::IndexMissing => 3,
             Self::Conflict { .. } => 5,
             Self::InvalidName { .. } | Self::NeedsInit { .. } | Self::UsageError(_) => 2,
             Self::Io(_)
             | Self::ConfigParse(_)
             | Self::ConfigWrite(_)
             | Self::DoctorErrorsFound { .. }
-            | Self::UpdateFailed(_) => 1,
+            | Self::UpdateFailed(_)
+            | Self::Index(_) => 1,
         }
     }
 }
@@ -180,6 +201,19 @@ mod tests {
     #[test]
     fn update_failed_maps_to_1() {
         let err = RepographError::UpdateFailed("network unreachable".into());
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn index_missing_maps_to_3_and_names_index_command() {
+        let err = RepographError::IndexMissing;
+        assert_eq!(err.exit_code(), 3);
+        assert!(err.to_string().contains("repograph index"));
+    }
+
+    #[test]
+    fn index_error_maps_to_1() {
+        let err = RepographError::Index("disk image is malformed".into());
         assert_eq!(err.exit_code(), 1);
     }
 

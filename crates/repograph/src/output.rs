@@ -8,8 +8,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use rayon::prelude::*;
 use repograph_core::{
-    Check, Context, DoctorReport, Repo, RepoContext, RepoStatus, RepographError, Scope, Severity,
-    Workspace,
+    Check, Context, DoctorReport, FIND_SCHEMA_VERSION, Hit, Repo, RepoContext, RepoStatus,
+    RepographError, Scope, Severity, Workspace,
 };
 use serde::Serialize;
 
@@ -314,6 +314,66 @@ fn write_status_table(statuses: &[RepoStatus]) -> Result<(), RepographError> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct FindEnvelope<'a> {
+    schema_version: u32,
+    query: &'a str,
+    hits: &'a [Hit],
+}
+
+/// Render cross-repo search hits to stdout. JSON mode emits a stable
+/// `{ schema_version, query, hits: [...] }` envelope; TTY mode renders a
+/// `comfy-table` with one row per hit (the snippet trimmed to its first line so
+/// the table stays scannable — the full snippet is in the JSON payload).
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when writing to stdout fails.
+pub fn render_hits(mode: OutputMode, query: &str, hits: &[Hit]) -> Result<(), RepographError> {
+    match mode {
+        OutputMode::Json => {
+            let envelope = FindEnvelope {
+                schema_version: FIND_SCHEMA_VERSION,
+                query,
+                hits,
+            };
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &envelope).map_err(serde_json_to_repograph)?;
+            stdout.write_all(b"\n")?;
+            Ok(())
+        }
+        OutputMode::Tty => {
+            let mut table = Table::new();
+            table.load_preset(UTF8_FULL);
+            table.set_header(vec!["Repo", "Path", "Line", "Score", "Snippet"]);
+            for hit in hits {
+                table.add_row(vec![
+                    Cell::new(&hit.repo),
+                    Cell::new(&hit.path),
+                    Cell::new(hit.line),
+                    Cell::new(format!("{:.4}", hit.score)),
+                    Cell::new(snippet_first_line(&hit.snippet)),
+                ]);
+            }
+            let mut stdout = io::stdout().lock();
+            writeln!(stdout, "{table}")?;
+            Ok(())
+        }
+    }
+}
+
+/// First non-empty line of a snippet, with an ellipsis when more follows — keeps
+/// the TTY table to one row per hit.
+fn snippet_first_line(snippet: &str) -> String {
+    let mut lines = snippet.lines().filter(|l| !l.trim().is_empty());
+    let first = lines.next().unwrap_or("").trim().to_string();
+    if snippet.lines().filter(|l| !l.trim().is_empty()).count() > 1 {
+        format!("{first} …")
+    } else {
+        first
+    }
+}
+
 const fn state_label(state: repograph_core::RepoState) -> &'static str {
     use repograph_core::RepoState;
     match state {
@@ -590,6 +650,7 @@ const fn check_label(c: Check) -> &'static str {
         Check::RepoIsGitRepo => "RepoIsGitRepo",
         Check::WorkspaceMembersResolve => "WorkspaceMembersResolve",
         Check::AgentDocPresent => "AgentDocPresent",
+        Check::SearchIndex => "SearchIndex",
     }
 }
 

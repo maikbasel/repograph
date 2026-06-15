@@ -107,6 +107,10 @@ fn claude_code_user_scope_writes_skill_md_under_home() {
         body.contains("repograph context"),
         "managed body should mention `repograph context`, got:\n{body}",
     );
+    assert!(
+        body.contains("repograph find"),
+        "managed body should teach the cross-repo `repograph find`, got:\n{body}",
+    );
 }
 
 #[test]

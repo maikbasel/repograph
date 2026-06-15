@@ -9,8 +9,10 @@
 use std::io;
 use std::path::Path;
 
+use std::path::PathBuf;
+
 use clap::Parser;
-use repograph_core::{CONFIG_FILE_NAME, Config, DoctorReport, RepographError};
+use repograph_core::{CONFIG_FILE_NAME, Config, DoctorReport, RepographError, index_health};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -33,8 +35,8 @@ pub struct Args {
 /// (exit `4`) when the config file exists but the process cannot read it;
 /// [`RepographError::DoctorErrorsFound`] (exit `1`) when the report contains
 /// at least one error finding.
-#[tracing::instrument(skip(args, config_dir), fields(json = args.json))]
-pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
+#[tracing::instrument(skip(args, config_dir, data_dir), fields(json = args.json))]
+pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), RepographError> {
     tracing::debug!(command = "doctor", json = args.json, "start");
 
     let mode = OutputMode::detect(args.json);
@@ -53,6 +55,22 @@ pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
     let report = match &load {
         Ok(cfg) => DoctorReport::run(Ok(cfg), &config_path, generated_at),
         Err(err) => DoctorReport::run(Err(err), &config_path, generated_at),
+    };
+
+    // Append the search-index health finding. Only meaningful when the config
+    // loaded (we need the repo list to judge staleness); on a load error the
+    // report already short-circuited, so skip it there.
+    let report = match &load {
+        Ok(cfg) => {
+            let repos: Vec<(String, PathBuf)> = cfg
+                .repos()
+                .iter()
+                .map(|(name, repo)| (name.clone(), repo.path.clone()))
+                .collect();
+            let status = index_health(data_dir, &repos)?;
+            report.with_index_check(&status)
+        }
+        Err(_) => report,
     };
 
     render_doctor(mode, &report)?;

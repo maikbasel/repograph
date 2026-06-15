@@ -12,7 +12,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
-use crate::common::{fixture_git_repo, repograph_cmd};
+use crate::common::{commit_files, fixture_git_repo, fixture_git_repo_with_files, repograph_cmd};
 
 fn init_agents(config_dir: &Path, agents: &str) {
     let cwd = config_dir
@@ -95,6 +95,9 @@ fn clean_config_emits_all_ok_and_exit_0() {
     register(&config_dir, &ui, "ui");
     create_workspace(&config_dir, "team");
     add_to_workspace(&config_dir, "team", &["api", "ui"]);
+    // Build the search index so the SearchIndex check reports `ok` rather than
+    // the "no index built yet" warn — this is a fully healthy setup.
+    repograph_cmd(&config_dir).arg("index").assert().success();
 
     let (v, code) = run_doctor_json(&config_dir);
     assert_eq!(code, 0);
@@ -103,6 +106,46 @@ fn clean_config_emits_all_ok_and_exit_0() {
     assert_eq!(v["summary"]["error"], 0);
     assert_eq!(v["summary"]["warn"], 0);
     assert!(v["summary"]["ok"].as_u64().unwrap() > 0);
+    // The search-index check is present and healthy.
+    assert_eq!(find_findings(&v, "SearchIndex", "ok").len(), 1);
+}
+
+#[test]
+fn search_index_not_built_emits_warn() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "fn a() {}\n")]);
+    register(&config_dir, &api, "api");
+    // No `repograph index` run.
+    let (v, code) = run_doctor_json(&config_dir);
+    assert_eq!(code, 0, "missing index is a warn, not an error");
+    let warns = find_findings(&v, "SearchIndex", "warn");
+    assert_eq!(warns.len(), 1);
+    assert!(
+        warns[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph index")
+    );
+}
+
+#[test]
+fn search_index_stale_after_new_commit_emits_warn_naming_repo() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "fn a() {}\n")]);
+    register(&config_dir, &api, "api");
+    repograph_cmd(&config_dir).arg("index").assert().success();
+    // A new commit moves HEAD past the indexed commit.
+    commit_files(&api, "more", &[("b.rs", "fn b() {}\n")]);
+
+    let (v, code) = run_doctor_json(&config_dir);
+    assert_eq!(code, 0);
+    let warns = find_findings(&v, "SearchIndex", "warn");
+    assert_eq!(warns.len(), 1, "stale index warns");
+    let names_repo = warns[0]["message"].as_str().unwrap().contains("api")
+        || warns[0]["target"].as_str().unwrap().contains("api");
+    assert!(names_repo, "stale finding names the repo");
 }
 
 #[test]

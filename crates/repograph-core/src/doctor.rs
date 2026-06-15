@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::context::resolve_agent_docs;
 use crate::error::RepographError;
 use crate::git::validate_git_repo;
+use crate::search::IndexStatus;
 
 /// Current schema version of the [`DoctorReport`] JSON envelope. Additive-only
 /// at `1`; any breaking change bumps this.
@@ -79,6 +80,10 @@ pub enum Check {
     /// pattern set. Only run when `AgentsConfigured` passed and the
     /// selection is non-empty.
     AgentDocPresent,
+    /// The cross-repo search index exists and is current relative to every
+    /// registered repo's HEAD. Appended by the binary via
+    /// [`DoctorReport::with_index_check`].
+    SearchIndex,
 }
 
 /// One row in the report.
@@ -178,6 +183,57 @@ impl DoctorReport {
         }
 
         assemble(findings, generated_at)
+    }
+
+    /// Append the search-index health finding, then re-sort and re-tally.
+    ///
+    /// The binary owns data-dir resolution and the [`IndexStatus`] probe, so it
+    /// computes the status and folds it into the report here. The finding is
+    /// `ok` when the index is present and current, `warn` when it is missing,
+    /// unreadable, or stale relative to one or more repos' HEAD.
+    #[must_use]
+    pub fn with_index_check(mut self, status: &IndexStatus) -> Self {
+        self.checks.push(index_finding(status));
+        sort_findings(&mut self.checks);
+        self.summary = tally(&self.checks);
+        self
+    }
+}
+
+fn index_finding(status: &IndexStatus) -> Finding {
+    const TARGET: &str = "search index";
+    if !status.present {
+        Finding {
+            check: Check::SearchIndex,
+            severity: Severity::Warn,
+            target: TARGET.to_string(),
+            message: "no search index built yet — run `repograph index`".to_string(),
+        }
+    } else if !status.readable {
+        Finding {
+            check: Check::SearchIndex,
+            severity: Severity::Warn,
+            target: TARGET.to_string(),
+            message: "search index is unreadable or corrupt — run `repograph index` to rebuild"
+                .to_string(),
+        }
+    } else if status.stale.is_empty() {
+        Finding {
+            check: Check::SearchIndex,
+            severity: Severity::Ok,
+            target: TARGET.to_string(),
+            message: "search index present and current".to_string(),
+        }
+    } else {
+        Finding {
+            check: Check::SearchIndex,
+            severity: Severity::Warn,
+            target: status.stale.join(", "),
+            message: format!(
+                "search index is stale or missing for: {} — run `repograph index`",
+                status.stale.join(", ")
+            ),
+        }
     }
 }
 
@@ -339,13 +395,27 @@ fn check_repo(name: &str, repo_path: &Path) -> Vec<Finding> {
 }
 
 fn assemble(mut findings: Vec<Finding>, generated_at: String) -> DoctorReport {
+    sort_findings(&mut findings);
+    let summary = tally(&findings);
+    DoctorReport {
+        schema_version: DOCTOR_SCHEMA_VERSION,
+        generated_at,
+        checks: findings,
+        summary,
+    }
+}
+
+fn sort_findings(findings: &mut [Finding]) {
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)
             .then_with(|| a.check.cmp(&b.check))
             .then_with(|| a.target.cmp(&b.target))
     });
-    let summary = findings.iter().fold(Summary::default(), |mut acc, f| {
+}
+
+fn tally(findings: &[Finding]) -> Summary {
+    findings.iter().fold(Summary::default(), |mut acc, f| {
         match f.severity {
             Severity::Ok => acc.ok += 1,
             Severity::Warn => acc.warn += 1,
@@ -353,13 +423,7 @@ fn assemble(mut findings: Vec<Finding>, generated_at: String) -> DoctorReport {
         }
         acc.total += 1;
         acc
-    });
-    DoctorReport {
-        schema_version: DOCTOR_SCHEMA_VERSION,
-        generated_at,
-        checks: findings,
-        summary,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -711,6 +775,66 @@ mod tests {
         assert!(v["checks"].is_array());
         assert!(v["summary"].is_object());
         assert!(v["summary"]["total"].is_number());
+    }
+
+    fn index_check(report: &DoctorReport) -> &Finding {
+        report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SearchIndex)
+            .expect("index check present")
+    }
+
+    #[test]
+    fn with_index_check_missing_is_warn() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_index_check(&IndexStatus::default());
+        let f = index_check(&report);
+        assert_eq!(f.severity, Severity::Warn);
+        assert!(f.message.contains("repograph index"));
+    }
+
+    #[test]
+    fn with_index_check_present_current_is_ok() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let status = IndexStatus {
+            present: true,
+            readable: true,
+            stale: vec![],
+        };
+        let report =
+            DoctorReport::run(Ok(&Config::default()), &path, ts()).with_index_check(&status);
+        assert_eq!(index_check(&report).severity, Severity::Ok);
+    }
+
+    #[test]
+    fn with_index_check_stale_names_repo_and_warns() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let status = IndexStatus {
+            present: true,
+            readable: true,
+            stale: vec!["api".to_string()],
+        };
+        let report =
+            DoctorReport::run(Ok(&Config::default()), &path, ts()).with_index_check(&status);
+        let f = index_check(&report);
+        assert_eq!(f.severity, Severity::Warn);
+        assert!(f.message.contains("api"));
+    }
+
+    #[test]
+    fn with_index_check_recomputes_summary_total() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let before = DoctorReport::run(Ok(&Config::default()), &path, ts());
+        let before_total = before.summary.total;
+        let after = before.with_index_check(&IndexStatus::default());
+        assert_eq!(after.summary.total, before_total + 1);
+        assert_eq!(after.summary.total as usize, after.checks.len());
     }
 
     #[test]

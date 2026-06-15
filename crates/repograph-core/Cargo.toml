@@ -26,6 +26,10 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 fs-err = { workspace = true }
 dunce = { workspace = true }
+# Diagnostics for adapter-level warnings (skipped repos, degraded embedding).
+# A no-op without a subscriber; the binary installs one. Per logging.md, the
+# `git2`/search adapters in core may log; pure data structs must not.
+tracing = { workspace = true }
 toml = "1.0"
 git2 = { version = "0.21", default-features = false, features = [
     "vendored-libgit2",
@@ -35,6 +39,24 @@ git2 = { version = "0.21", default-features = false, features = [
 ] }
 dirs = "6"
 globset = "0.4"
+# Embedded index store. `bundled` compiles SQLite in (no system dep) with FTS5
+# enabled, giving BM25 lexical search; vectors are stored as Float32 BLOBs in a
+# plain table and cosine is computed in Rust.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# Local semantic embeddings — OPTIONAL, behind the `semantic` feature. Pulls the
+# ONNX runtime (downloaded at build time) and a model (downloaded once at
+# runtime), so it is never compiled unless `--features semantic` is set. The
+# always-on lexical path needs none of this.
+fastembed = { version = "5", optional = true }
+
+[features]
+default = []
+# Opt-in semantic retrieval: compiles `fastembed` and the embedding/vector code
+# paths. Without it, `repograph find --semantic` degrades to lexical with a
+# stderr notice. NOT enabled by dist/release builds (dist-workspace.toml sets no
+# `features`, so cargo-dist builds default features only) — packaged binaries
+# ship lexical-only. For embeddings: `cargo install repograph --features semantic`.
+semantic = ["dep:fastembed"]
 
 [dev-dependencies]
 tempfile = "3"
