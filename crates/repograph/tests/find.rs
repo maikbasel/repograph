@@ -38,7 +38,10 @@ fn two_repo_fixture() -> (TempDir, std::path::PathBuf) {
     let api = fixture_git_repo_with_files(
         tmp.path(),
         "api",
-        &[("auth.rs", "pub fn rotate_refresh_token(token: &str) -> String { token.to_string() }\n")],
+        &[(
+            "auth.rs",
+            "pub fn rotate_refresh_token(token: &str) -> String { token.to_string() }\n",
+        )],
     );
     let ui = fixture_git_repo_with_files(
         tmp.path(),
@@ -70,7 +73,12 @@ fn find_exact_symbol_returns_hit_with_fields() {
     assert_eq!(top["path"], "auth.rs");
     assert!(top["line"].is_number());
     assert!(top["score"].is_number());
-    assert!(top["snippet"].as_str().unwrap().contains("rotate_refresh_token"));
+    assert!(
+        top["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("rotate_refresh_token")
+    );
 }
 
 #[test]
@@ -93,7 +101,9 @@ fn find_json_is_pure_data_and_parses() {
 fn find_limit_bounds_results() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
-    let body: String = (0..40).map(|n| format!("pub fn widget_{n}() {{}}\n")).collect();
+    let body: String = (0..40)
+        .map(|n| format!("pub fn widget_{n}() {{}}\n"))
+        .collect();
     let api = fixture_git_repo_with_files(tmp.path(), "api", &[("widgets.rs", &body)]);
     register(&config_dir, &api, "api");
     build_index(&config_dir);
@@ -127,8 +137,13 @@ fn find_no_match_is_empty_hits_exit_0() {
 fn find_workspace_filter_scopes_results() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
-    let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn shared_helper() {}\n")]);
-    let ui = fixture_git_repo_with_files(tmp.path(), "ui", &[("b.rs", "pub fn shared_helper() {}\n")]);
+    let api = fixture_git_repo_with_files(
+        tmp.path(),
+        "api",
+        &[("a.rs", "pub fn shared_helper() {}\n")],
+    );
+    let ui =
+        fixture_git_repo_with_files(tmp.path(), "ui", &[("b.rs", "pub fn shared_helper() {}\n")]);
     register(&config_dir, &api, "api");
     register(&config_dir, &ui, "ui");
     repograph_cmd(&config_dir)
@@ -157,7 +172,10 @@ fn find_workspace_filter_scopes_results() {
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     let hits = v["hits"].as_array().unwrap();
     assert!(!hits.is_empty());
-    assert!(hits.iter().all(|h| h["repo"] == "api"), "scoped to workspace repos");
+    assert!(
+        hits.iter().all(|h| h["repo"] == "api"),
+        "scoped to workspace repos"
+    );
 }
 
 #[test]

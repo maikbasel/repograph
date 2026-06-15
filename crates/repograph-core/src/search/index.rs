@@ -110,14 +110,16 @@ impl Store {
                 "index schema version {other} is not readable by this build (expected {SCHEMA_VERSION}); run `repograph index` to rebuild"
             ))),
             None => Err(RepographError::Index(
-                "index is missing its schema marker (corrupt); run `repograph index` to rebuild".to_string(),
+                "index is missing its schema marker (corrupt); run `repograph index` to rebuild"
+                    .to_string(),
             )),
         }
     }
 
     fn ensure_schema(&self) -> Result<(), RepographError> {
-        self.conn
-            .execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")?;
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        )?;
         let version: Option<String> = self.meta_get("schema_version")?;
         if version.as_deref() == Some(SCHEMA_VERSION) {
             return Ok(());
@@ -229,7 +231,9 @@ impl Store {
     ///
     /// Returns [`RepographError::Index`] on `SQLite` failure.
     pub fn indexed_commits(&self) -> Result<HashMap<String, Option<String>>, RepographError> {
-        let mut stmt = self.conn.prepare("SELECT repo, indexed_commit FROM repos")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT repo, indexed_commit FROM repos")?;
         let rows = stmt.query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
         })?;
@@ -657,7 +661,10 @@ mod tests {
     #[test]
     fn incremental_skips_unchanged_and_reprocesses_changed() {
         let (_tmp, mut store) = build_store();
-        let files = vec![tf("a.rs", "fn first() {}\n"), tf("b.rs", "fn second() {}\n")];
+        let files = vec![
+            tf("a.rs", "fn first() {}\n"),
+            tf("b.rs", "fn second() {}\n"),
+        ];
         store.reconcile_repo("r", &files, None, None).unwrap();
 
         // Second run: a.rs unchanged, b.rs changed.
@@ -671,7 +678,10 @@ mod tests {
 
         // The old symbol is gone, the new one is present.
         assert!(
-            !store.search_lexical("second_renamed", &[], 10).unwrap().is_empty(),
+            !store
+                .search_lexical("second_renamed", &[], 10)
+                .unwrap()
+                .is_empty(),
             "new content searchable"
         );
         let old = store.search_lexical("second", &[], 10).unwrap();
@@ -736,7 +746,10 @@ mod tests {
     #[test]
     fn fts_query_extracts_tokens() {
         assert_eq!(fts_query("  !!  "), None);
-        assert_eq!(fts_query("Rotate Refresh"), Some("\"rotate\" OR \"refresh\"".to_string()));
+        assert_eq!(
+            fts_query("Rotate Refresh"),
+            Some("\"rotate\" OR \"refresh\"".to_string())
+        );
     }
 
     #[test]

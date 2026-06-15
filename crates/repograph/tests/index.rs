@@ -155,9 +155,17 @@ fn index_scoped_to_workspace_excludes_other_repos() {
         .assert()
         .success();
 
-    assert!(!find_json(&config_dir, "alphaonly")["hits"].as_array().unwrap().is_empty());
     assert!(
-        find_json(&config_dir, "betaonly")["hits"].as_array().unwrap().is_empty(),
+        !find_json(&config_dir, "alphaonly")["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        find_json(&config_dir, "betaonly")["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "repo outside the workspace was not indexed"
     );
 }

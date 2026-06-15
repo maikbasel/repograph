@@ -37,7 +37,10 @@ pub fn create(model_cache_dir: &Path) -> Result<Box<dyn Embedder>, String> {
 /// Always returns a notice that the build lacks semantic support.
 #[cfg(not(feature = "semantic"))]
 pub fn create(_model_cache_dir: &Path) -> Result<Box<dyn Embedder>, String> {
-    Err("built without semantic support — rebuild with `--features semantic` for embeddings".to_string())
+    Err(
+        "built without semantic support — rebuild with `--features semantic` for embeddings"
+            .to_string(),
+    )
 }
 
 #[cfg(feature = "semantic")]

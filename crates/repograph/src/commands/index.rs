@@ -40,7 +40,9 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
     let repos = resolve_repos(&config, args.workspace.as_deref())?;
 
     if repos.is_empty() {
-        eprintln!("Nothing to index — no repositories in scope. Register some with `repograph add`.");
+        eprintln!(
+            "Nothing to index — no repositories in scope. Register some with `repograph add`."
+        );
         tracing::info!("index: empty scope");
         return Ok(());
     }
@@ -64,7 +66,11 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
             files = outcome.files_indexed,
             unchanged = outcome.files_unchanged,
             purged = outcome.files_purged,
-            sem = if outcome.semantic { " (with embeddings)" } else { "" },
+            sem = if outcome.semantic {
+                " (with embeddings)"
+            } else {
+                ""
+            },
         );
     } else {
         eprintln!(

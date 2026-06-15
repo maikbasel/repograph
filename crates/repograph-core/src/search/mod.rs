@@ -210,9 +210,8 @@ pub fn search(
                     Err(msg) => degraded = Some(msg),
                 }
             } else {
-                degraded = Some(
-                    "index has no embeddings — run `repograph index --semantic`".to_string(),
-                );
+                degraded =
+                    Some("index has no embeddings — run `repograph index --semantic`".to_string());
             }
         }
     }
@@ -273,7 +272,9 @@ pub fn index_health(
     let commits = store.indexed_commits()?;
     let mut stale = Vec::new();
     for (name, path) in repos {
-        let current = git2::Repository::open(path).ok().and_then(|r| head_commit(&r));
+        let current = git2::Repository::open(path)
+            .ok()
+            .and_then(|r| head_commit(&r));
         match commits.get(name) {
             Some(indexed) if *indexed == current => {}
             _ => stale.push(name.clone()),
@@ -290,7 +291,10 @@ pub fn index_health(
 /// Construct an embedder when `semantic` is requested. Returns `(None,
 /// Some(reason))` when semantic is requested but unavailable, `(Some, None)` on
 /// success, and `(None, None)` when semantic was not requested.
-fn make_embedder(semantic: bool, model_cache_dir: &Path) -> (Option<Box<dyn Embedder>>, Option<String>) {
+fn make_embedder(
+    semantic: bool,
+    model_cache_dir: &Path,
+) -> (Option<Box<dyn Embedder>>, Option<String>) {
     if !semantic {
         return (None, None);
     }
@@ -343,8 +347,16 @@ mod tests {
     fn build_then_search_across_repos() {
         let tmp = TempDir::new().unwrap();
         let data = tmp.path().join("data");
-        let api = init_repo(tmp.path(), "api", &[("auth.rs", "fn rotate_refresh_token() {}\n")]);
-        let ui = init_repo(tmp.path(), "ui", &[("button.rs", "fn render_button() {}\n")]);
+        let api = init_repo(
+            tmp.path(),
+            "api",
+            &[("auth.rs", "fn rotate_refresh_token() {}\n")],
+        );
+        let ui = init_repo(
+            tmp.path(),
+            "ui",
+            &[("button.rs", "fn render_button() {}\n")],
+        );
         let repos = vec![("api".to_string(), api), ("ui".to_string(), ui)];
 
         let outcome = build_index(&data, &repos, false).unwrap();

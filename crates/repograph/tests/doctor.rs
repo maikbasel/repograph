@@ -121,7 +121,12 @@ fn search_index_not_built_emits_warn() {
     assert_eq!(code, 0, "missing index is a warn, not an error");
     let warns = find_findings(&v, "SearchIndex", "warn");
     assert_eq!(warns.len(), 1);
-    assert!(warns[0]["message"].as_str().unwrap().contains("repograph index"));
+    assert!(
+        warns[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph index")
+    );
 }
 
 #[test]

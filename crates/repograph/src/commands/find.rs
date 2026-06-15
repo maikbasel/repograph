@@ -68,7 +68,13 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
         None => Vec::new(),
     };
 
-    let outcome = search(data_dir, &args.query, &repos_filter, args.limit, args.semantic)?;
+    let outcome = search(
+        data_dir,
+        &args.query,
+        &repos_filter,
+        args.limit,
+        args.semantic,
+    )?;
 
     if let Some(reason) = &outcome.degraded {
         tracing::warn!(reason = %reason, "find: semantic unavailable; used lexical");
