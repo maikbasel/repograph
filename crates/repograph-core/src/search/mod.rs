@@ -26,8 +26,12 @@ pub const INDEX_DB_NAME: &str = "index.db";
 /// Subdirectory of the data directory that caches the embedding model.
 pub const MODEL_SUBDIR: &str = "models";
 
-/// Schema version of the `repograph find` JSON envelope. Additive-only at `1`.
-pub const FIND_SCHEMA_VERSION: u32 = 1;
+/// Schema version of the `repograph find` JSON envelope.
+///
+/// Bumped to `2` when `semantic_used` and `degraded` were added so an agent can
+/// detect, from the stdout payload alone, whether semantic retrieval ran or
+/// silently fell back to lexical.
+pub const FIND_SCHEMA_VERSION: u32 = 2;
 
 /// Candidate-pool multiplier: we pull `limit * POOL_FACTOR` candidates from each
 /// retrieval arm before fusing, so fusion has room to reorder.

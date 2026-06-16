@@ -64,7 +64,7 @@ fn find_exact_symbol_returns_hit_with_fields() {
         .assert()
         .success();
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["schema_version"], 2);
     assert_eq!(v["query"], "rotate_refresh_token");
     let hits = v["hits"].as_array().unwrap();
     assert!(!hits.is_empty(), "exact symbol is found");
@@ -131,6 +131,59 @@ fn find_no_match_is_empty_hits_exit_0() {
         .success();
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert!(v["hits"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn find_json_envelope_reports_retrieval_mode() {
+    // A plain (lexical) query must tell an agent, in the stdout payload, that
+    // semantic retrieval did not run and nothing degraded — not just on stderr.
+    let (_tmp, config_dir) = two_repo_fixture();
+    let out = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("rotate_refresh_token")
+        .arg("--json")
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["schema_version"], 2);
+    assert_eq!(
+        v["semantic_used"], false,
+        "lexical query did not use semantic retrieval"
+    );
+    assert!(
+        v["degraded"].is_null(),
+        "nothing degraded on a satisfied lexical query"
+    );
+}
+
+// Only meaningful on a build *without* the `semantic` feature: there, the
+// embedder can never initialize, so the degrade reason is deterministic and
+// needs no model download. Under `--all-features` the binary has real semantic
+// support and `--semantic` would attempt a network fetch — that path is covered
+// (gated, offline-skipped) in `tests/semantic.rs` instead.
+#[cfg(not(feature = "semantic"))]
+#[test]
+fn find_semantic_on_lexical_build_reports_degraded_in_json() {
+    // Requesting `--semantic` from a build without the feature must surface the
+    // fallback in the machine-readable payload, so an agent parsing stdout can
+    // detect that results are keyword-only — a silent degrade is a contract hole.
+    let (_tmp, config_dir) = two_repo_fixture();
+    let out = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("rotate_refresh_token")
+        .arg("--semantic")
+        .arg("--json")
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["semantic_used"], false);
+    let reason = v["degraded"]
+        .as_str()
+        .expect("degraded carries a reason string when semantic was requested but unavailable");
+    assert!(
+        reason.contains("semantic"),
+        "degrade reason names the missing capability: {reason}"
+    );
 }
 
 #[test]
