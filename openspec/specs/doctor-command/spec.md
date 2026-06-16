@@ -3,9 +3,7 @@
 ## Purpose
 
 The `doctor-command` capability is repograph's read-only health check: it loads the config and runs a closed catalog of checks across every registered repo, workspace, and the agent configuration, surfacing the drift that accumulates over time (deleted paths, dangling workspace members, repos that lost their `.git/`, missing agent docs that would silently produce empty `context` sections). It defines the v1 `Check` catalog, the `Finding` / `Severity` / `DoctorReport` data model, the stable versioned JSON envelope (`schema_version: 1`) for agent consumption, the TTY `comfy-table` rendering with colorized severities, the exit-code mapping (`0` clean or warn-only; `1` any error; `4` config permission-denied), the strict read-only and zero-network contract, and the composition rule that prevents `doctor.rs` from duplicating git-open or agent-pattern logic owned by the `git` and `context` modules. The capability composes `registry-core`, `workspace-support`, `init-command`, and `context-command` without modifying them.
-
 ## Requirements
-
 ### Requirement: Doctor command runs a fixed catalog of read-only health checks against the config
 
 The CLI SHALL accept a `repograph doctor` subcommand that loads the config and runs every check in the v1 catalog, producing a `DoctorReport` of findings. The catalog is the closed enum `repograph_core::doctor::Check`:
@@ -208,3 +206,24 @@ The project `README.md` SHALL document the `repograph doctor` subcommand under i
 
 - **WHEN** a reader opens `README.md` and searches for `repograph doctor`
 - **THEN** they find a section with the check catalog table, the JSON envelope shape, and the exit-code mapping; the section explicitly states the command is read-only and performs no network operations
+
+### Requirement: Doctor reports search index health
+
+`repograph doctor` SHALL include a check reporting the state of the cross-repo search index. The check SHALL report `ok` when the index exists and every registered repo's indexed commit matches its current HEAD, `warn` when the index is missing or stale for one or more repos, and SHALL never panic when the index database is absent or unreadable. The check SHALL identify which repos are stale so the user knows to run `repograph index`.
+
+#### Scenario: Index present and current
+
+- **WHEN** the user runs `repograph doctor` after indexing with no subsequent commits
+- **THEN** the index check reports `ok`
+
+#### Scenario: Index missing
+
+- **WHEN** the user runs `repograph doctor` before ever building an index
+- **THEN** the index check reports `warn` indicating the index has not been built
+- **AND** doctor does not panic
+
+#### Scenario: Index stale relative to HEAD
+
+- **WHEN** a registered repo has new commits since it was last indexed
+- **THEN** the index check reports `warn` and names the stale repo
+

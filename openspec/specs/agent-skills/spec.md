@@ -3,9 +3,7 @@
 ## Purpose
 
 The `agent-skills` capability owns the per-agent native instruction-artifact surface: the canonical instructional body shared across every agent, the per-agent writers that wrap it in native frontmatter/headers, the fixed (agent, scope) → path matrix, the managed-section delimiter contract that makes installs idempotent, the `--force` bypass, and the typed `ArtifactResult` outcome reported per agent. It is consumed by `repograph init` (and any future caller that needs to install agent artifacts) to write a small file at a well-known path for each selected agent so the agent's runtime picks it up automatically and learns when to invoke `repograph` CLI commands.
-
 ## Requirements
-
 ### Requirement: Shared artifact body is the single source of truth
 
 The system SHALL expose a single canonical artifact body as a `pub const &str` constant from `repograph_core::agent_artifact`. The constant SHALL contain all repograph-specific instructional prose (purpose statement, when-to-invoke triggers, command surface table, JSON schema cross-reference) and SHALL NOT contain per-agent frontmatter, headers, or wrappers. Per-agent writers SHALL wrap this constant; they SHALL NOT author body content independently.
@@ -169,3 +167,14 @@ The system SHALL expose a query `AgentId::has_artifact_writer(&self) -> bool` (o
 
 - **WHEN** the same query runs for each of `claude-code`, `agents-md`, `cursor`, `aider`, `windsurf`
 - **THEN** every result is `true`
+
+### Requirement: Agent artifact teaches cross-repo find
+
+The generated per-agent instruction artifact SHALL include guidance teaching the agent to invoke `repograph find "<query>"` when the user signals that a solution likely already exists in another repo — for example "I did this before", "this is solved somewhere", or "use repo X as reference" — including the case where the user cannot name the repo. The guidance SHALL position `repograph find` as the way to locate cross-repo precedent before re-implementing.
+
+#### Scenario: Artifact body includes find guidance
+
+- **WHEN** `repograph init` writes the per-agent instruction artifact
+- **THEN** the artifact body contains guidance to call `repograph find` for cross-repo precedent queries
+- **AND** the guidance distinguishes this from same-repo lookups
+
