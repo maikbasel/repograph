@@ -51,6 +51,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
+[features]
+default = []
+# Forward semantic retrieval to the core crate so the documented single-package
+# install (`cargo install repograph --features semantic`) actually resolves and
+# compiles embeddings into the binary. Without this passthrough the flag only
+# took effect on a whole-workspace build via feature unification.
+semantic = ["repograph-core/semantic"]
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

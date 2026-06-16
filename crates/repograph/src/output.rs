@@ -318,23 +318,40 @@ fn write_status_table(statuses: &[RepoStatus]) -> Result<(), RepographError> {
 struct FindEnvelope<'a> {
     schema_version: u32,
     query: &'a str,
+    /// Whether semantic (embedding) retrieval actually contributed to the
+    /// ranking. `false` for a lexical-only query or when semantic degraded.
+    semantic_used: bool,
+    /// Reason semantic retrieval was requested but unavailable (missing
+    /// feature, no embeddings, no model), or `null` when not requested or fully
+    /// satisfied. Mirrors the stderr notice so stdout-only consumers can detect
+    /// a keyword-only fallback.
+    degraded: Option<&'a str>,
     hits: &'a [Hit],
 }
 
 /// Render cross-repo search hits to stdout. JSON mode emits a stable
-/// `{ schema_version, query, hits: [...] }` envelope; TTY mode renders a
-/// `comfy-table` with one row per hit (the snippet trimmed to its first line so
-/// the table stays scannable — the full snippet is in the JSON payload).
+/// `{ schema_version, query, semantic_used, degraded, hits: [...] }` envelope;
+/// TTY mode renders a `comfy-table` with one row per hit (the snippet trimmed to
+/// its first line so the table stays scannable — the full snippet is in the JSON
+/// payload).
 ///
 /// # Errors
 ///
 /// Returns [`RepographError::Io`] when writing to stdout fails.
-pub fn render_hits(mode: OutputMode, query: &str, hits: &[Hit]) -> Result<(), RepographError> {
+pub fn render_hits(
+    mode: OutputMode,
+    query: &str,
+    hits: &[Hit],
+    semantic_used: bool,
+    degraded: Option<&str>,
+) -> Result<(), RepographError> {
     match mode {
         OutputMode::Json => {
             let envelope = FindEnvelope {
                 schema_version: FIND_SCHEMA_VERSION,
                 query,
+                semantic_used,
+                degraded,
                 hits,
             };
             let mut stdout = io::stdout().lock();

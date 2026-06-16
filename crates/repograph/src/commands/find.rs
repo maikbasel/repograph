@@ -81,7 +81,13 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
         eprintln!("note: {reason}; showing keyword results");
     }
 
-    render_hits(mode, &args.query, &outcome.hits)?;
+    render_hits(
+        mode,
+        &args.query,
+        &outcome.hits,
+        outcome.semantic_used,
+        outcome.degraded.as_deref(),
+    )?;
 
     tracing::info!(
         hits = outcome.hits.len(),

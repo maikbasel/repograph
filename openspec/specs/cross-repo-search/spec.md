@@ -79,14 +79,20 @@ The system SHALL provide `repograph find "<query>"` returning code chunks ranked
 
 ### Requirement: Stable output contract for find
 
-`repograph find` SHALL write pure data to stdout and all diagnostics to stderr. In a TTY it SHALL render a table; in non-TTY or with `--json` it SHALL emit a JSON envelope carrying a `schema_version`, the `query`, and a `hits` array where each hit contains `repo`, `path`, `line`, `score`, and `snippet`. The `--limit <n>` flag SHALL bound the number of hits returned. The JSON envelope SHALL remain stable so downstream agents can depend on its shape.
+`repograph find` SHALL write pure data to stdout and all diagnostics to stderr. In a TTY it SHALL render a table; in non-TTY or with `--json` it SHALL emit a JSON envelope carrying a `schema_version`, the `query`, a `semantic_used` boolean, a nullable `degraded` reason, and a `hits` array where each hit contains `repo`, `path`, `line`, `score`, and `snippet`. The `--limit <n>` flag SHALL bound the number of hits returned. The JSON envelope SHALL remain stable so downstream agents can depend on its shape.
 
 #### Scenario: JSON output pipes cleanly
 
 - **WHEN** the user runs `repograph find "<query>" --json`
-- **THEN** stdout contains a single valid JSON object with `schema_version`, `query`, and `hits`
+- **THEN** stdout contains a single valid JSON object with `schema_version`, `query`, `semantic_used`, `degraded`, and `hits`
 - **AND** no diagnostic text is written to stdout
 - **AND** the output parses with `jq`
+
+#### Scenario: Retrieval mode is machine-detectable
+
+- **WHEN** the user runs `repograph find "<query>" --semantic --json` and semantic retrieval is unavailable (missing feature, no embeddings, or no model)
+- **THEN** the JSON envelope reports `semantic_used` as `false` and a non-null `degraded` reason
+- **AND** the same fallback is also noted on stderr
 
 #### Scenario: Limit bounds results
 

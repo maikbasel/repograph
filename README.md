@@ -112,7 +112,7 @@ In an interactive terminal, repograph also prints a one-line notice on **stderr*
 | `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
 | `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config, and search-index freshness. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
 | `repograph index [--workspace <name>] [--semantic]` | Build or refresh the cross-repo search index over the git-tracked files of registered repos (or one workspace). Git-aware and incremental: only changed files are re-processed, removed files are purged. `--semantic` adds local embeddings (requires a build with the `semantic` feature; otherwise lexical-only with a stderr notice). No stdout payload; a summary and warnings go to stderr. |
-| `repograph find "<query>" [--workspace <name>] [--limit <n>] [--semantic] [--json]` | Find code across all registered repos (or one workspace) by meaning or keyword — locate a reference implementation when you're not sure which repo holds it. Hybrid retrieval (BM25 + optional semantic). Ranked `comfy-table` on TTY; stable `{ schema_version, query, hits: [...] }` JSON envelope when piped or `--json`. Empty results are success (exit 0); a never-built index is exit 3. |
+| `repograph find "<query>" [--workspace <name>] [--limit <n>] [--semantic] [--json]` | Find code across all registered repos (or one workspace) by meaning or keyword — locate a reference implementation when you're not sure which repo holds it. Hybrid retrieval (BM25 + optional semantic). Ranked `comfy-table` on TTY; stable `{ schema_version, query, semantic_used, degraded, hits: [...] }` JSON envelope when piped or `--json`. Empty results are success (exit 0); a never-built index is exit 3. |
 | `repograph init` | Interactive setup: pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
 | `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. |
@@ -262,19 +262,21 @@ Empty registry: `{ "repos": [] }`.
 
 `dangling` is always present (even when empty), so agent consumers can detect drift without a key-existence check. A dangling member also produces a `WARN` line on stderr.
 
-`repograph find "<query>" --json` emits a stable, `schema_version`-carrying envelope. `hits` is always an array (empty on no match); each hit names the repo, the repo-relative path, the 1-based start line, a fused relevance score, and a snippet:
+`repograph find "<query>" --json` emits a stable, `schema_version`-carrying envelope (`schema_version: 2`). `hits` is always an array (empty on no match); each hit names the repo, the repo-relative path, the 1-based start line, a fused relevance score, and a snippet. `semantic_used` reports whether embedding retrieval actually contributed; `degraded` carries the fallback reason (or `null`) so a stdout-only consumer can detect a keyword-only result without reading stderr:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "query": "jwt refresh token rotation",
+  "semantic_used": true,
+  "degraded": null,
   "hits": [
     { "repo": "api", "path": "src/auth/token.rs", "line": 42, "score": 0.0312, "snippet": "pub fn rotate_refresh_token(..) { .. }" }
   ]
 }
 ```
 
-When `--semantic` is requested but the binary was built without the `semantic` feature (or the index has no embeddings), `find` degrades to keyword-only retrieval and prints a `note:` line to stderr — stdout stays pure data.
+When `--semantic` is requested but the binary was built without the `semantic` feature (or the index has no embeddings), `find` degrades to keyword-only retrieval: `semantic_used` is `false`, `degraded` names the reason, and a `note:` line is printed to stderr — stdout stays pure data. Build with embeddings via `cargo install repograph --features semantic`.
 
 `repograph status --json` emits a `repos`-keyed envelope of richer per-repo status entries. The `error` field is always present (`null` on healthy rows) so consumers can branch on `repo.error != null` without a key-existence check:
 
