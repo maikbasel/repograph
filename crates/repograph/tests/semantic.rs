@@ -35,6 +35,16 @@ fn register(config_dir: &Path, repo: &Path, name: &str) {
         .success();
 }
 
+/// Extract the `path` of every hit from a `find --json` envelope.
+fn json_hit_paths(envelope: &serde_json::Value) -> Vec<&str> {
+    envelope["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["path"].as_str().unwrap())
+        .collect()
+}
+
 /// `index --semantic` must download the model, embed every chunk, and report
 /// that embeddings were written — proving the runtime path actually executes.
 #[test]
@@ -92,6 +102,23 @@ fn find_semantic_ranks_by_meaning_and_marks_json_envelope() {
         .assert()
         .success();
 
+    // The query shares no tokens with `resilience.rs` ("pause", "transient",
+    // "failure" vs. "retry", "backoff", "attempts"). Lexical control: the same
+    // query without `--semantic` must NOT surface the file — otherwise its later
+    // appearance under `--semantic` proves nothing about the embedding path.
+    let lexical = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("pause and try the request again after a transient failure")
+        .arg("--json")
+        .assert()
+        .success();
+    let lv: serde_json::Value = serde_json::from_slice(&lexical.get_output().stdout).unwrap();
+    let lexical_paths = json_hit_paths(&lv);
+    assert!(
+        !lexical_paths.contains(&"resilience.rs"),
+        "BM25 alone must miss the zero-overlap paraphrase; it returned: {lexical_paths:?}"
+    );
+
     let out = repograph_cmd(&config_dir)
         .arg("find")
         .arg("pause and try the request again after a transient failure")
@@ -110,12 +137,7 @@ fn find_semantic_ranks_by_meaning_and_marks_json_envelope() {
         v["degraded"].is_null(),
         "model present and embeddings written — nothing degraded"
     );
-    let paths: Vec<&str> = v["hits"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|h| h["path"].as_str().unwrap())
-        .collect();
+    let paths = json_hit_paths(&v);
     assert!(
         paths.contains(&"resilience.rs"),
         "semantic retrieval surfaces the meaning-matched file BM25 alone misses: {paths:?}"
