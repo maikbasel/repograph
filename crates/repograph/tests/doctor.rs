@@ -138,11 +138,17 @@ fn missing_skill_artifact_emits_warn_with_init_hint() {
     let warns = find_findings(&v, "SkillArtifactFresh", "warn");
     assert_eq!(warns.len(), 1, "the removed setup skill warns");
     assert!(
-        warns[0]["message"].as_str().unwrap().contains("repograph init"),
+        warns[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph init"),
         "warning must point at `repograph init`"
     );
     assert!(
-        warns[0]["target"].as_str().unwrap().contains("repograph-setup"),
+        warns[0]["target"]
+            .as_str()
+            .unwrap()
+            .contains("repograph-setup"),
         "target names the missing capability"
     );
 }

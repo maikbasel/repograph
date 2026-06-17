@@ -186,7 +186,9 @@ pub fn installed_version(existing: &str) -> Option<u32> {
     // Marker shape: ` v<N> -->`. Take up to the closing `-->`, find the `v<N>`.
     let line_end = after_prefix.find("-->")?;
     let marker_tail = &after_prefix[..line_end];
-    let token = marker_tail.split_whitespace().find(|t| t.starts_with('v'))?;
+    let token = marker_tail
+        .split_whitespace()
+        .find(|t| t.starts_with('v'))?;
     token[1..].parse().ok()
 }
 
@@ -478,19 +480,19 @@ pub fn splice_managed_section(existing: Option<&str>, new_block_body: &str) -> S
                 if inner == new_block_body && matched_begin == DELIMITER_BEGIN {
                     return SpliceOutcome::Identical;
                 }
-            // Build the replaced output: prefix + DELIMITER_BEGIN + \n + body
-            // + \n + DELIMITER_END + suffix (where suffix begins at
-            // `inner_end + DELIMITER_END.len()`).
-            let suffix_start = inner_end + DELIMITER_END.len();
-            let mut out = String::with_capacity(existing.len() + new_block_body.len());
-            out.push_str(&existing[..begin_idx]);
-            out.push_str(DELIMITER_BEGIN);
-            out.push('\n');
-            out.push_str(new_block_body);
-            out.push('\n');
-            out.push_str(DELIMITER_END);
-            out.push_str(&existing[suffix_start..]);
-            return SpliceOutcome::Replaced(out);
+                // Build the replaced output: prefix + DELIMITER_BEGIN + \n + body
+                // + \n + DELIMITER_END + suffix (where suffix begins at
+                // `inner_end + DELIMITER_END.len()`).
+                let suffix_start = inner_end + DELIMITER_END.len();
+                let mut out = String::with_capacity(existing.len() + new_block_body.len());
+                out.push_str(&existing[..begin_idx]);
+                out.push_str(DELIMITER_BEGIN);
+                out.push('\n');
+                out.push_str(new_block_body);
+                out.push('\n');
+                out.push_str(DELIMITER_END);
+                out.push_str(&existing[suffix_start..]);
+                return SpliceOutcome::Replaced(out);
             }
         }
         // Begin without end (or without a closing `-->`) is malformed; treat as
@@ -875,7 +877,13 @@ mod tests {
             // Flat-file agents are capability-independent: one shared path.
             assert_eq!(
                 resolve_path(AgentId::AgentsMd, cap, Scope::Project, &home, &cwd),
-                resolve_path(AgentId::AgentsMd, Capability::Consumer, Scope::Project, &home, &cwd),
+                resolve_path(
+                    AgentId::AgentsMd,
+                    Capability::Consumer,
+                    Scope::Project,
+                    &home,
+                    &cwd
+                ),
             );
         }
 
@@ -1027,11 +1035,12 @@ mod tests {
             );
             match splice_managed_section(Some(&existing), "BODY") {
                 SpliceOutcome::Replaced(s) => {
+                    assert_eq!(s, format!("user-prefix\n{}user-suffix\n", block("BODY")));
                     assert_eq!(
-                        s,
-                        format!("user-prefix\n{}user-suffix\n", block("BODY"))
+                        s.matches("repograph:begin").count(),
+                        1,
+                        "no duplicate block"
                     );
-                    assert_eq!(s.matches("repograph:begin").count(), 1, "no duplicate block");
                 }
                 other => panic!("expected Replaced for an older-version block, got {other:?}"),
             }
@@ -1270,7 +1279,8 @@ mod tests {
             let cwd = dir.path().join("proj");
             fs_err::create_dir_all(&home).unwrap();
             fs_err::create_dir_all(&cwd).unwrap();
-            let results = install_artifacts(&[AgentId::ClaudeCode], Scope::User, &home, &cwd, false);
+            let results =
+                install_artifacts(&[AgentId::ClaudeCode], Scope::User, &home, &cwd, false);
             assert_eq!(results.len(), 2);
             // The setup skill lands at its own discrete path.
             let setup_path = home.join(".claude/skills/repograph-setup/SKILL.md");

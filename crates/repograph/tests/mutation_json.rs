@@ -105,9 +105,22 @@ fn workspace_add_json_confirms_members() {
     let config_dir = tmp.path().join("config");
     let api = fixture_git_repo(tmp.path(), "api");
     let web = fixture_git_repo(tmp.path(), "web");
-    repograph_cmd(&config_dir).args(["add"]).arg(&api).args(["--name", "api"]).assert().success();
-    repograph_cmd(&config_dir).args(["add"]).arg(&web).args(["--name", "web"]).assert().success();
-    repograph_cmd(&config_dir).args(["workspace", "create", "acme"]).assert().success();
+    repograph_cmd(&config_dir)
+        .args(["add"])
+        .arg(&api)
+        .args(["--name", "api"])
+        .assert()
+        .success();
+    repograph_cmd(&config_dir)
+        .args(["add"])
+        .arg(&web)
+        .args(["--name", "web"])
+        .assert()
+        .success();
+    repograph_cmd(&config_dir)
+        .args(["workspace", "create", "acme"])
+        .assert()
+        .success();
 
     let out = repograph_cmd(&config_dir)
         .args(["workspace", "add", "acme", "api", "web", "--json"])
@@ -116,7 +129,12 @@ fn workspace_add_json_confirms_members() {
     let v = json_stdout(&out.get_output().stdout);
     assert_eq!(v["action"], "workspace.add");
     assert_eq!(v["workspace"], "acme");
-    let repos: Vec<&str> = v["repos"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    let repos: Vec<&str> = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
     assert!(repos.contains(&"api") && repos.contains(&"web"));
 }
 
@@ -124,7 +142,10 @@ fn workspace_add_json_confirms_members() {
 fn workspace_rm_json_confirms_deletion() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
-    repograph_cmd(&config_dir).args(["workspace", "create", "acme"]).assert().success();
+    repograph_cmd(&config_dir)
+        .args(["workspace", "create", "acme"])
+        .assert()
+        .success();
 
     let out = repograph_cmd(&config_dir)
         .args(["workspace", "rm", "acme", "--json"])

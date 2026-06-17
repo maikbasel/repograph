@@ -15,8 +15,8 @@ pub mod path;
 pub mod search;
 
 pub use agent_artifact::{
-    ARTIFACT_BODY_VERSION, ArtifactResult, BODY as AGENT_ARTIFACT_BODY, Capability, DELIMITER_BEGIN,
-    DELIMITER_BEGIN_PREFIX, DELIMITER_END, REASON_COPILOT_DEFERRED,
+    ARTIFACT_BODY_VERSION, ArtifactResult, BODY as AGENT_ARTIFACT_BODY, Capability,
+    DELIMITER_BEGIN, DELIMITER_BEGIN_PREFIX, DELIMITER_END, REASON_COPILOT_DEFERRED,
     SETUP_BODY as AGENT_ARTIFACT_SETUP_BODY, SETUP_SUMMARY as AGENT_ARTIFACT_SETUP_SUMMARY,
     SUMMARY as AGENT_ARTIFACT_SUMMARY, capabilities_for, has_artifact_writer, install_artifacts,
     install_one, installed_version, render_artifact, resolve_path, scope_is_meaningful,

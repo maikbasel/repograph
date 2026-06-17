@@ -304,10 +304,13 @@ impl Config {
 
         // All checks passed — apply field updates to the (possibly soon-renamed) entry.
         // Safe to unwrap-free: presence was verified above.
-        let mut repo = self.repos.remove(name).ok_or_else(|| RepographError::NotFound {
-            kind: "repo",
-            name: name.to_string(),
-        })?;
+        let mut repo = self
+            .repos
+            .remove(name)
+            .ok_or_else(|| RepographError::NotFound {
+                kind: "repo",
+                name: name.to_string(),
+            })?;
         if let Some(description) = edit.description {
             repo.description = description.filter(|s| !s.is_empty());
         }
@@ -1135,7 +1138,10 @@ mod tests {
         assert_eq!(name, "foo");
         assert_eq!(repo.description.as_deref(), Some("new"));
         assert_eq!(repo.stack, vec!["rust", "cli"]);
-        assert_eq!(cfg.repos.get("foo").unwrap().path, PathBuf::from("/tmp/foo"));
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().path,
+            PathBuf::from("/tmp/foo")
+        );
     }
 
     #[test]
@@ -1204,7 +1210,10 @@ mod tests {
         assert!(matches!(err, RepographError::Conflict { kind: "name", .. }));
         // No mutation: foo still present, bar untouched.
         assert!(cfg.repos.contains_key("foo"));
-        assert_eq!(cfg.repos.get("bar").unwrap().path, PathBuf::from("/tmp/bar"));
+        assert_eq!(
+            cfg.repos.get("bar").unwrap().path,
+            PathBuf::from("/tmp/bar")
+        );
     }
 
     #[test]
@@ -1237,7 +1246,10 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, RepographError::Conflict { kind: "path", .. }));
-        assert_eq!(cfg.repos.get("foo").unwrap().path, PathBuf::from("/tmp/foo"));
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().path,
+            PathBuf::from("/tmp/foo")
+        );
     }
 
     #[test]
@@ -1255,6 +1267,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "foo");
-        assert_eq!(cfg.repos.get("foo").unwrap().description.as_deref(), Some("d"));
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().description.as_deref(),
+            Some("d")
+        );
     }
 }

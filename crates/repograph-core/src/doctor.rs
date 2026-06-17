@@ -947,7 +947,13 @@ mod tests {
     /// user-scope path under `home`.
     fn install_current(home: &Path, agent: AgentId, capability: crate::agent_artifact::Capability) {
         use crate::agent_artifact::{Scope, render_artifact, resolve_path};
-        let path = resolve_path(agent, capability, Scope::User, home, Path::new("/unused-cwd"));
+        let path = resolve_path(
+            agent,
+            capability,
+            Scope::User,
+            home,
+            Path::new("/unused-cwd"),
+        );
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, render_artifact(agent, capability)).unwrap();
     }
@@ -1035,8 +1041,11 @@ mod tests {
         install_current(&home, AgentId::ClaudeCode, Capability::Setup);
         let consumer = home.join(".claude/skills/repograph/SKILL.md");
         let before = std::fs::metadata(&consumer).unwrap().modified().unwrap();
-        let _ = DoctorReport::run(Ok(&Config::default()), &path, ts())
-            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
+        let _ = DoctorReport::run(Ok(&Config::default()), &path, ts()).with_skill_artifact_check(
+            &[AgentId::ClaudeCode],
+            &home,
+            Path::new("/cwd"),
+        );
         let after = std::fs::metadata(&consumer).unwrap().modified().unwrap();
         assert_eq!(before, after, "doctor must not rewrite the artifact");
     }
