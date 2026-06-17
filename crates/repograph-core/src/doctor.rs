@@ -80,6 +80,11 @@ pub enum Check {
     /// pattern set. Only run when `AgentsConfigured` passed and the
     /// selection is non-empty.
     AgentDocPresent,
+    /// Per selected agent × capability: the installed skill artifact exists and
+    /// its version stamp matches the running binary. Read-only — reports drift,
+    /// never repairs it. Appended by the binary via
+    /// [`DoctorReport::with_skill_artifact_check`].
+    SkillArtifactFresh,
     /// The cross-repo search index exists and is current relative to every
     /// registered repo's HEAD. Appended by the binary via
     /// [`DoctorReport::with_index_check`].
@@ -198,6 +203,92 @@ impl DoctorReport {
         self.summary = tally(&self.checks);
         self
     }
+
+    /// Fold in a read-only freshness check for the installed skill artifacts.
+    ///
+    /// For each selected agent (with a writer) and each of its capabilities,
+    /// resolves the expected install path under both user and project scope,
+    /// reads whichever exists, and compares its version stamp to the running
+    /// binary's [`crate::agent_artifact::ARTIFACT_BODY_VERSION`]. Reports `ok`
+    /// when current, `warn` when missing or stale — and never writes, creates,
+    /// or repairs the artifact. When `selected` is empty (no `[agents]`), no
+    /// findings are produced. The binary owns `home`/`cwd` resolution and folds
+    /// the result in here, mirroring [`Self::with_index_check`].
+    #[must_use]
+    pub fn with_skill_artifact_check(
+        mut self,
+        selected: &[crate::agents::AgentId],
+        home: &Path,
+        cwd: &Path,
+    ) -> Self {
+        self.checks
+            .extend(skill_artifact_findings(selected, home, cwd));
+        sort_findings(&mut self.checks);
+        self.summary = tally(&self.checks);
+        self
+    }
+}
+
+/// Build the per-(agent, capability) freshness findings. Pure and read-only.
+fn skill_artifact_findings(
+    selected: &[crate::agents::AgentId],
+    home: &Path,
+    cwd: &Path,
+) -> Vec<Finding> {
+    use crate::agent_artifact::{
+        ARTIFACT_BODY_VERSION, Scope, capabilities_for, has_artifact_writer, installed_version,
+        resolve_path,
+    };
+
+    let mut findings = Vec::new();
+    for &agent in selected {
+        if !has_artifact_writer(agent) {
+            continue;
+        }
+        for &capability in capabilities_for(agent) {
+            let target = format!("{} / {}", agent.as_str(), capability.skill_name());
+            // The artifact may live at user or project scope; accept either.
+            let user_path = resolve_path(agent, capability, Scope::User, home, cwd);
+            let project_path = resolve_path(agent, capability, Scope::Project, home, cwd);
+            let found = [user_path, project_path]
+                .into_iter()
+                .find_map(|p| fs_err::read_to_string(&p).ok());
+
+            let finding = match found {
+                None => Finding {
+                    check: Check::SkillArtifactFresh,
+                    severity: Severity::Warn,
+                    target,
+                    message: "skill artifact missing — run `repograph init`".to_string(),
+                },
+                Some(contents) => match installed_version(&contents) {
+                    Some(v) if v >= ARTIFACT_BODY_VERSION => Finding {
+                        check: Check::SkillArtifactFresh,
+                        severity: Severity::Ok,
+                        target,
+                        message: format!("skill artifact current (v{v})"),
+                    },
+                    Some(v) => Finding {
+                        check: Check::SkillArtifactFresh,
+                        severity: Severity::Warn,
+                        target,
+                        message: format!(
+                            "skill artifact is stale (installed v{v} < current v{ARTIFACT_BODY_VERSION}) — run `repograph init`"
+                        ),
+                    },
+                    None => Finding {
+                        check: Check::SkillArtifactFresh,
+                        severity: Severity::Warn,
+                        target,
+                        message: "skill artifact has no version stamp — run `repograph init`"
+                            .to_string(),
+                    },
+                },
+            };
+            findings.push(finding);
+        }
+    }
+    findings
 }
 
 fn index_finding(status: &IndexStatus) -> Finding {
@@ -848,5 +939,105 @@ mod tests {
         let v = serde_json::to_value(&f).unwrap();
         assert_eq!(v["check"], "RepoIsGitRepo");
         assert_eq!(v["severity"], "ok");
+    }
+
+    // ---- skill-artifact freshness check ----
+
+    /// Write the current-version artifact for `(agent, capability)` at its
+    /// user-scope path under `home`.
+    fn install_current(home: &Path, agent: AgentId, capability: crate::agent_artifact::Capability) {
+        use crate::agent_artifact::{Scope, render_artifact, resolve_path};
+        let path = resolve_path(agent, capability, Scope::User, home, Path::new("/unused-cwd"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, render_artifact(agent, capability)).unwrap();
+    }
+
+    #[test]
+    fn skill_artifact_missing_is_warn_with_init_hint() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
+        // claude-code yields two capabilities, both missing.
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 2);
+        let f = report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SkillArtifactFresh)
+            .unwrap();
+        assert!(f.message.contains("repograph init"), "missing init hint");
+    }
+
+    #[test]
+    fn skill_artifact_current_is_ok() {
+        use crate::agent_artifact::Capability;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        install_current(&home, AgentId::ClaudeCode, Capability::Consumer);
+        install_current(&home, AgentId::ClaudeCode, Capability::Setup);
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Ok), 2);
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 0);
+    }
+
+    #[test]
+    fn skill_artifact_stale_version_is_warn() {
+        use crate::agent_artifact::{Capability, Scope, resolve_path};
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        // Install a deliberately old-version block for the consumer skill.
+        let p = resolve_path(
+            AgentId::ClaudeCode,
+            Capability::Consumer,
+            Scope::User,
+            &home,
+            Path::new("/cwd"),
+        );
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            "---\nname: repograph\n---\n\n<!-- repograph:begin v0 -->\nOLD\n<!-- repograph:end -->\n",
+        )
+        .unwrap();
+        install_current(&home, AgentId::ClaudeCode, Capability::Setup);
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
+        let stale = report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SkillArtifactFresh && f.severity == Severity::Warn)
+            .expect("a stale warn finding");
+        assert!(stale.message.contains("stale"), "names staleness");
+        assert!(stale.message.contains("repograph init"));
+    }
+
+    #[test]
+    fn empty_agent_selection_produces_no_skill_findings() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[], &tmp.path().join("home"), Path::new("/cwd"));
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Ok), 0);
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 0);
+    }
+
+    #[test]
+    fn skill_check_does_not_mutate_artifacts() {
+        use crate::agent_artifact::Capability;
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        install_current(&home, AgentId::ClaudeCode, Capability::Consumer);
+        install_current(&home, AgentId::ClaudeCode, Capability::Setup);
+        let consumer = home.join(".claude/skills/repograph/SKILL.md");
+        let before = std::fs::metadata(&consumer).unwrap().modified().unwrap();
+        let _ = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
+        let after = std::fs::metadata(&consumer).unwrap().modified().unwrap();
+        assert_eq!(before, after, "doctor must not rewrite the artifact");
     }
 }

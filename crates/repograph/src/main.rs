@@ -44,6 +44,9 @@ enum Command {
     /// Run a read-only health check over the config and every registered repo.
     /// JSON when piped or `--json`; coloured table when stdout is a TTY.
     Doctor(commands::doctor::Args),
+    /// Update a registered repository in place — rename, retag, re-describe, or
+    /// repoint its path. Renames preserve workspace memberships.
+    Edit(commands::edit::Args),
     /// Find code across all registered repos by meaning or keyword — locate a
     /// reference implementation when you're not sure which repo it's in.
     Find(commands::find::Args),
@@ -92,6 +95,7 @@ fn main() -> ExitCode {
         Command::Doctor(args) => {
             data_dir().and_then(|d| commands::doctor::run(&args, &config_dir, &d))
         }
+        Command::Edit(args) => commands::edit::run(args, &config_dir),
         Command::Find(args) => data_dir().and_then(|d| commands::find::run(&args, &config_dir, &d)),
         Command::Index(args) => {
             data_dir().and_then(|d| commands::index::run(&args, &config_dir, &d))

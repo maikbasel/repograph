@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::{Parser, Subcommand};
 use repograph_core::{Config, RepographError, validate_workspace_name};
 
-use crate::output::{OutputMode, render_workspace_show, render_workspaces};
+use crate::output::{self, Mutation, OutputMode, render_workspace_show, render_workspaces};
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -37,12 +37,20 @@ pub struct CreateArgs {
     /// Optional human-readable description.
     #[arg(long)]
     pub description: Option<String>,
+
+    /// Emit a JSON confirmation of the created workspace to stdout.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]
 pub struct RmArgs {
     /// Name of the workspace to delete.
     pub name: String,
+
+    /// Emit a JSON confirmation of the deletion to stdout.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -70,6 +78,10 @@ pub struct MembershipArgs {
     /// One or more repo names to add or remove.
     #[arg(required = true)]
     pub repos: Vec<String>,
+
+    /// Emit a JSON confirmation of the membership change to stdout.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Dispatch the parsed `workspace` subcommand.
@@ -100,6 +112,12 @@ fn run_create(args: CreateArgs, config_dir: &Path) -> Result<(), RepographError>
     config.create_workspace(args.name.clone(), args.description)?;
     config.save(config_dir)?;
     tracing::info!(workspace = %args.name, "created");
+
+    if args.json {
+        output::render_mutation(&Mutation::WorkspaceCreate {
+            workspace: &args.name,
+        })?;
+    }
     Ok(())
 }
 
@@ -113,6 +131,12 @@ fn run_rm(args: &RmArgs, config_dir: &Path) -> Result<(), RepographError> {
     config.remove_workspace(&args.name)?;
     config.save(config_dir)?;
     tracing::info!(workspace = %args.name, "removed");
+
+    if args.json {
+        output::render_mutation(&Mutation::WorkspaceRm {
+            workspace: &args.name,
+        })?;
+    }
     Ok(())
 }
 
@@ -174,6 +198,13 @@ fn run_add(args: &MembershipArgs, config_dir: &Path) -> Result<(), RepographErro
         added = args.repos.len(),
         "members added"
     );
+
+    if args.json {
+        output::render_mutation(&Mutation::WorkspaceAdd {
+            workspace: &args.workspace,
+            repos: &args.repos,
+        })?;
+    }
     Ok(())
 }
 
@@ -191,5 +222,12 @@ fn run_remove(args: &MembershipArgs, config_dir: &Path) -> Result<(), RepographE
         removed = args.repos.len(),
         "members removed"
     );
+
+    if args.json {
+        output::render_mutation(&Mutation::WorkspaceRemove {
+            workspace: &args.workspace,
+            repos: &args.repos,
+        })?;
+    }
     Ok(())
 }

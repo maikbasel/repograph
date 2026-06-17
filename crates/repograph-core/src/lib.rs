@@ -15,14 +15,16 @@ pub mod path;
 pub mod search;
 
 pub use agent_artifact::{
-    ArtifactResult, BODY as AGENT_ARTIFACT_BODY, DELIMITER_BEGIN, DELIMITER_END,
-    REASON_COPILOT_DEFERRED, SUMMARY as AGENT_ARTIFACT_SUMMARY, has_artifact_writer,
-    install_artifacts, install_one, render_artifact, resolve_path, scope_is_meaningful,
+    ARTIFACT_BODY_VERSION, ArtifactResult, BODY as AGENT_ARTIFACT_BODY, Capability, DELIMITER_BEGIN,
+    DELIMITER_BEGIN_PREFIX, DELIMITER_END, REASON_COPILOT_DEFERRED,
+    SETUP_BODY as AGENT_ARTIFACT_SETUP_BODY, SETUP_SUMMARY as AGENT_ARTIFACT_SETUP_SUMMARY,
+    SUMMARY as AGENT_ARTIFACT_SUMMARY, capabilities_for, has_artifact_writer, install_artifacts,
+    install_one, installed_version, render_artifact, resolve_path, scope_is_meaningful,
 };
 pub use agents::AgentId;
 pub use config::{
     Agents, CONFIG_FILE_NAME, Config, MAX_WORKSPACE_NAME_LEN, RESERVED_WORKSPACE_NAMES, Repo,
-    Settings, Workspace, WorkspaceResolution, validate_workspace_name,
+    RepoEdit, Settings, Workspace, WorkspaceResolution, validate_workspace_name,
 };
 pub use context::{
     AgentDoc, Context, MatchedFile, RepoContext, SCHEMA_VERSION, Scope, resolve_agent_docs,

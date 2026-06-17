@@ -65,27 +65,62 @@ pub enum Scope {
     Project,
 }
 
-/// Per-agent outcome of an install. The orchestrator returns one of these per
-/// input agent in selection order.
+/// Which generated skill a given artifact carries.
+///
+/// `Consumer` is the read-only surface (`list`/`status`/`context`/`switch`);
+/// `Setup` is the mutating surface (`add`/`remove`/`edit`/`workspace …`).
+/// Wholly-owned-file agents (Claude, Cursor) receive one artifact per
+/// capability; flat-file agents inline both capabilities into a single block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Capability {
+    /// The read-only consumer skill (`repograph`).
+    Consumer,
+    /// The mutating registry-management skill (`repograph-setup`).
+    Setup,
+}
+
+impl Capability {
+    /// The skill name (and frontmatter `name:`) for this capability.
+    #[must_use]
+    pub const fn skill_name(self) -> &'static str {
+        match self {
+            Self::Consumer => "repograph",
+            Self::Setup => "repograph-setup",
+        }
+    }
+}
+
+/// Per-artifact outcome of an install. The orchestrator returns one of these
+/// per (agent, capability) artifact actually targeted, in selection order.
 ///
 /// `RepographError` is not `Clone`, so this enum is `Debug`-only on purpose.
 #[derive(Debug)]
 pub enum ArtifactResult {
     /// File was created or its delimited block was rewritten.
-    Written { agent: AgentId, path: PathBuf },
+    Written {
+        agent: AgentId,
+        capability: Capability,
+        path: PathBuf,
+    },
     /// File already exists with a delimited block whose body is byte-identical
     /// to the canonical content; no I/O write occurred.
-    Unchanged { agent: AgentId, path: PathBuf },
+    Unchanged {
+        agent: AgentId,
+        capability: Capability,
+        path: PathBuf,
+    },
     /// Agent has no writer (today: only `Copilot`); the install layer skipped
     /// it with no file write attempted.
     Skipped {
         agent: AgentId,
         reason: &'static str,
     },
-    /// Per-agent failure (read or write I/O error). Reported on stderr; does
+    /// Per-artifact failure (read or write I/O error). Reported on stderr; does
     /// not abort the surrounding run.
     Failed {
         agent: AgentId,
+        capability: Capability,
         error: RepographError,
     },
 }
@@ -101,17 +136,59 @@ impl ArtifactResult {
             | Self::Failed { agent, .. } => *agent,
         }
     }
+
+    /// The capability this result pertains to, or `None` for a `Skipped` agent
+    /// (which has no per-capability artifact).
+    #[must_use]
+    pub const fn capability(&self) -> Option<Capability> {
+        match self {
+            Self::Written { capability, .. }
+            | Self::Unchanged { capability, .. }
+            | Self::Failed { capability, .. } => Some(*capability),
+            Self::Skipped { .. } => None,
+        }
+    }
 }
 
 /// Reason strings used in [`ArtifactResult::Skipped`]. Stable: agents may
 /// observe them in `repograph doctor` output or log scraping.
 pub const REASON_COPILOT_DEFERRED: &str = "no writer in v1";
 
-/// HTML-comment marker opening the repograph-managed region of an artifact.
-pub const DELIMITER_BEGIN: &str = "<!-- repograph:begin -->";
+/// Monotonic version of the managed artifact body.
+///
+/// Bump this whenever the rendered body content changes so installed artifacts
+/// can be detected as stale (see [`installed_version`] and the `doctor`
+/// freshness check). Kept in sync with the literal in [`DELIMITER_BEGIN`] by a
+/// unit test.
+pub const ARTIFACT_BODY_VERSION: u32 = 1;
+
+/// Version-agnostic prefix of the begin marker. Splice detection matches on
+/// this so an older-version block is recognized and rewritten in place rather
+/// than appended as a duplicate.
+pub const DELIMITER_BEGIN_PREFIX: &str = "<!-- repograph:begin";
+
+/// HTML-comment marker opening the repograph-managed region of an artifact,
+/// carrying the current [`ARTIFACT_BODY_VERSION`] stamp.
+pub const DELIMITER_BEGIN: &str = "<!-- repograph:begin v1 -->";
 
 /// HTML-comment marker closing the repograph-managed region of an artifact.
 pub const DELIMITER_END: &str = "<!-- repograph:end -->";
+
+/// Parse the body-version stamp from an installed file's managed block.
+///
+/// Returns `None` when the file has no recognizable begin marker. Used by
+/// `doctor` to compare an installed artifact against the running binary's
+/// [`ARTIFACT_BODY_VERSION`] without rewriting anything.
+#[must_use]
+pub fn installed_version(existing: &str) -> Option<u32> {
+    let begin = existing.find(DELIMITER_BEGIN_PREFIX)?;
+    let after_prefix = &existing[begin + DELIMITER_BEGIN_PREFIX.len()..];
+    // Marker shape: ` v<N> -->`. Take up to the closing `-->`, find the `v<N>`.
+    let line_end = after_prefix.find("-->")?;
+    let marker_tail = &after_prefix[..line_end];
+    let token = marker_tail.split_whitespace().find(|t| t.starts_with('v'))?;
+    token[1..].parse().ok()
+}
 
 /// Skill `description` rendered into the YAML frontmatter of the agents that
 /// have it (Claude `SKILL.md`, Cursor `.mdc`).
@@ -129,6 +206,15 @@ pub const DELIMITER_END: &str = "<!-- repograph:end -->";
 /// not embed this string.
 pub const SUMMARY: &str = "Use when the user refers to one of their own git projects/repos by name and wants to act on it: switch / open / \"cd into\" a repo (\"switch to taverne\", \"open the api repo\", \"cd into <name>\"), list or compare their registered repos, check cross-repo git status (\"what's dirty\", \"what's in flight across my projects\", \"which repos have uncommitted changes\"), or pull a repo's CLAUDE.md / AGENTS.md content into the conversation. Maintains a local registry of git repositories and exposes their paths, branches, status, and agent docs as structured JSON. ALWAYS prefer this over manual `find` / `git` to resolve a named project to a filesystem path. Use it for which-repo / across-repos questions, not for the current directory's own `git status` (use plain `git` for that).";
 
+/// Skill `description` for the `repograph-setup` capability — the mutating
+/// surface.
+///
+/// Distinct from [`SUMMARY`]: its triggers name registering, grouping, and
+/// updating registry entries so the host invokes it (not the read-only consumer
+/// skill) when the user wants to change their registry. Rendered into the setup
+/// artifact's frontmatter for wholly-owned-file agents.
+pub const SETUP_SUMMARY: &str = "Use when the user wants to set up or change their repograph registry: register a local git repo (\"add this repo\", \"track /path/to/project\"), group repos into a workspace (\"create a workspace for acme\", \"put api and web together\"), update an existing entry (\"rename that repo\", \"change its description\", \"retag it\", \"point it at the new path\"), or deregister a repo or workspace (\"remove that repo\", \"delete the acme workspace\"). Drives the mutating commands `add`, `edit`, `remove`, and `workspace …` behind a plan→confirm→execute→verify workflow. Use this for changing the registry; use the read-only `repograph` skill for resolving, listing, or reading it.";
+
 /// The single canonical instructional body, shared by every per-agent writer.
 ///
 /// Owned by `repograph-core` so the CLI surface is documented in exactly one
@@ -140,11 +226,50 @@ pub const SUMMARY: &str = "Use when the user refers to one of their own git proj
 /// install layer rewrites only the delimited region.
 pub const BODY: &str = include_str!("agent_artifact_body.md");
 
-/// Convenience accessor for the writer-side summary. Mirrors `SUMMARY`; this
-/// exists so writers don't reach into module-level constants directly.
+/// The canonical instructional body for the `repograph-setup` capability — the
+/// mutating surface.
+///
+/// Owned by `repograph-core` so the CLI mutation surface is documented in
+/// exactly one place, mirroring [`BODY`] for the consumer skill.
+pub const SETUP_BODY: &str = include_str!("agent_artifact_setup_body.md");
+
+/// The instructional body for `capability`.
+#[must_use]
+pub const fn body_for(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Consumer => BODY,
+        Capability::Setup => SETUP_BODY,
+    }
+}
+
+/// The frontmatter `description:` summary for `capability`.
+#[must_use]
+pub const fn summary_for(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Consumer => SUMMARY,
+        Capability::Setup => SETUP_SUMMARY,
+    }
+}
+
+/// Convenience accessor for the consumer writer-side summary. Mirrors `SUMMARY`;
+/// this exists so writers don't reach into module-level constants directly.
 #[must_use]
 pub const fn writer_summary() -> &'static str {
     SUMMARY
+}
+
+/// The capabilities that should be emitted for `agent`, in install order.
+///
+/// Wholly-owned-file agents (Claude, Cursor) emit a discrete artifact per
+/// capability. Flat-file agents (AGENTS.md, Aider, Windsurf) inline both bodies
+/// into a single block, so they emit one combined artifact tagged `Consumer`.
+#[must_use]
+pub const fn capabilities_for(agent: AgentId) -> &'static [Capability] {
+    if wholly_owned_file(agent) {
+        &[Capability::Consumer, Capability::Setup]
+    } else {
+        &[Capability::Consumer]
+    }
 }
 
 /// Is there an installed-artifact writer for this agent in v1?
@@ -184,21 +309,28 @@ pub const fn wholly_owned_file(agent: AgentId) -> bool {
 /// See [`scope_is_meaningful`] for the symmetric predicate the init command
 /// uses to decide whether to require a `--scope` flag under `--no-prompt`.
 #[must_use]
-pub fn resolve_path(agent: AgentId, scope: Scope, home: &Path, cwd: &Path) -> PathBuf {
+pub fn resolve_path(
+    agent: AgentId,
+    capability: Capability,
+    scope: Scope,
+    home: &Path,
+    cwd: &Path,
+) -> PathBuf {
+    // Flat-file agents (AGENTS.md, Aider, Windsurf) inline both capabilities
+    // into one file, so their path is capability-independent. Wholly-owned-file
+    // agents get a discrete path per capability, keyed by the skill name.
+    let skill = capability.skill_name();
     match agent {
-        AgentId::ClaudeCode => match scope {
-            Scope::User => home.join(".claude/skills/repograph/SKILL.md"),
-            Scope::Project => cwd.join(".claude/skills/repograph/SKILL.md"),
-        },
-        AgentId::AgentsMd | AgentId::Aider | AgentId::Cursor => {
-            // Project-only agents: scope falls through to project root.
-            match agent {
-                AgentId::AgentsMd => cwd.join("AGENTS.md"),
-                AgentId::Aider => cwd.join("CONVENTIONS.md"),
-                AgentId::Cursor => cwd.join(".cursor/rules/repograph.mdc"),
-                _ => unreachable!(),
+        AgentId::ClaudeCode => {
+            let rel = format!(".claude/skills/{skill}/SKILL.md");
+            match scope {
+                Scope::User => home.join(rel),
+                Scope::Project => cwd.join(rel),
             }
         }
+        AgentId::Cursor => cwd.join(format!(".cursor/rules/{skill}.mdc")),
+        AgentId::AgentsMd => cwd.join("AGENTS.md"),
+        AgentId::Aider => cwd.join("CONVENTIONS.md"),
         AgentId::Windsurf => match scope {
             Scope::User => home.join(".codeium/windsurf/memories/repograph.md"),
             Scope::Project => cwd.join(".windsurfrules"),
@@ -227,7 +359,9 @@ pub fn scope_is_meaningful(agent: AgentId) -> bool {
     // scope doesn't matter for this agent.
     let home = Path::new("/__home__");
     let cwd = Path::new("/__cwd__");
-    resolve_path(agent, Scope::User, home, cwd) != resolve_path(agent, Scope::Project, home, cwd)
+    // Scope-dependence is identical across capabilities; Consumer is representative.
+    resolve_path(agent, Capability::Consumer, Scope::User, home, cwd)
+        != resolve_path(agent, Capability::Consumer, Scope::Project, home, cwd)
 }
 
 /// Compose the full file contents for `agent`: per-agent frontmatter (if any)
@@ -242,26 +376,32 @@ pub fn scope_is_meaningful(agent: AgentId) -> bool {
 /// Panics with `unreachable!` if called for `AgentId::Copilot`. Callers MUST
 /// gate on [`has_artifact_writer`] first; reaching this branch is a logic bug.
 #[must_use]
-pub fn render_artifact(agent: AgentId) -> String {
+pub fn render_artifact(agent: AgentId, capability: Capability) -> String {
     match agent {
         AgentId::ClaudeCode => format!(
-            "---\nname: repograph\ndescription: >-\n  {summary}\n---\n\n\
+            "---\nname: {name}\ndescription: >-\n  {summary}\n---\n\n\
              {begin}\n{body}\n{end}\n",
-            summary = writer_summary(),
+            name = capability.skill_name(),
+            summary = summary_for(capability),
             begin = DELIMITER_BEGIN,
-            body = BODY,
+            body = body_for(capability),
             end = DELIMITER_END,
         ),
         AgentId::Cursor => format!(
             "---\ndescription: >-\n  {summary}\nglobs: []\n---\n\n\
              {begin}\n{body}\n{end}\n",
-            summary = writer_summary(),
+            summary = summary_for(capability),
             begin = DELIMITER_BEGIN,
-            body = BODY,
+            body = body_for(capability),
             end = DELIMITER_END,
         ),
         AgentId::AgentsMd | AgentId::Aider | AgentId::Windsurf => {
-            format!("{DELIMITER_BEGIN}\n# repograph\n\n{BODY}\n{DELIMITER_END}\n")
+            // Flat-file agents inline BOTH capabilities into one managed block:
+            // the consumer body followed by the setup body. `capability` is
+            // ignored — these agents only ever request the single combined file.
+            format!(
+                "{DELIMITER_BEGIN}\n# repograph\n\n{BODY}\n\n# repograph-setup\n\n{SETUP_BODY}\n{DELIMITER_END}\n"
+            )
         }
         AgentId::Copilot => {
             unreachable!("render_artifact: copilot has no writer; check has_artifact_writer first")
@@ -306,32 +446,38 @@ pub fn splice_managed_section(existing: Option<&str>, new_block_body: &str) -> S
         return SpliceOutcome::FreshWrite(full_block);
     };
 
-    // Locate the delimiter pair within the existing file.
-    if let Some(begin_idx) = existing.find(DELIMITER_BEGIN) {
-        // The body starts after the begin-delimiter line.
-        let after_begin = begin_idx + DELIMITER_BEGIN.len();
-        // Skip a single newline immediately after the begin delimiter, if
-        // present, so the captured inner-body string doesn't carry that
-        // separator. (We re-add it on emit.)
-        let inner_start = if existing[after_begin..].starts_with('\n') {
-            after_begin + 1
-        } else {
-            after_begin
-        };
-        if let Some(end_rel) = existing[inner_start..].find(DELIMITER_END) {
-            // `inner_end` is the index of the first byte of DELIMITER_END.
-            let inner_end = inner_start + end_rel;
-            // The inner body sits between `inner_start` and `inner_end`.
-            // It typically ends with a `\n` we wrote on the last install; we
-            // compare the body without that trailing newline so callers don't
-            // have to think about it.
-            let inner_with_trailing_nl = &existing[inner_start..inner_end];
-            let inner = inner_with_trailing_nl
-                .strip_suffix('\n')
-                .unwrap_or(inner_with_trailing_nl);
-            if inner == new_block_body {
-                return SpliceOutcome::Identical;
-            }
+    // Locate the begin marker by its version-agnostic prefix, so an
+    // older-version block (e.g. `… begin v1 …` when the current is `v2`) is
+    // still recognized and rewritten in place rather than duplicated.
+    if let Some(begin_idx) = existing.find(DELIMITER_BEGIN_PREFIX) {
+        // The begin marker spans from `begin_idx` to the end of its `-->`.
+        let rest = &existing[begin_idx..];
+        if let Some(marker_rel_end) = rest.find("-->") {
+            let begin_marker_end = begin_idx + marker_rel_end + "-->".len();
+            let matched_begin = &existing[begin_idx..begin_marker_end];
+            // The body starts after the begin-marker line.
+            // Skip a single newline immediately after the marker, if present.
+            let inner_start = if existing[begin_marker_end..].starts_with('\n') {
+                begin_marker_end + 1
+            } else {
+                begin_marker_end
+            };
+            if let Some(end_rel) = existing[inner_start..].find(DELIMITER_END) {
+                // `inner_end` is the index of the first byte of DELIMITER_END.
+                let inner_end = inner_start + end_rel;
+                // The inner body sits between `inner_start` and `inner_end`.
+                // It typically ends with a `\n` we wrote on the last install; we
+                // compare the body without that trailing newline so callers
+                // don't have to think about it.
+                let inner_with_trailing_nl = &existing[inner_start..inner_end];
+                let inner = inner_with_trailing_nl
+                    .strip_suffix('\n')
+                    .unwrap_or(inner_with_trailing_nl);
+                // Identical only when both the body AND the marker version match
+                // the current ones — a version bump alone forces a rewrite.
+                if inner == new_block_body && matched_begin == DELIMITER_BEGIN {
+                    return SpliceOutcome::Identical;
+                }
             // Build the replaced output: prefix + DELIMITER_BEGIN + \n + body
             // + \n + DELIMITER_END + suffix (where suffix begins at
             // `inner_end + DELIMITER_END.len()`).
@@ -345,9 +491,10 @@ pub fn splice_managed_section(existing: Option<&str>, new_block_body: &str) -> S
             out.push_str(DELIMITER_END);
             out.push_str(&existing[suffix_start..]);
             return SpliceOutcome::Replaced(out);
+            }
         }
-        // Begin without end is malformed; treat as no-block-present and append
-        // a fresh block. The user content stays intact.
+        // Begin without end (or without a closing `-->`) is malformed; treat as
+        // no-block-present and append a fresh block. User content stays intact.
     }
 
     // No delimiter pair: append the full block after a separating newline.
@@ -382,13 +529,18 @@ pub fn splice_managed_section(existing: Option<&str>, new_block_body: &str) -> S
 /// Caller MUST gate on [`has_artifact_writer`] first; this function calls
 /// [`render_artifact`] which panics for `Copilot`.
 #[must_use]
-pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
+pub fn install_one(
+    agent: AgentId,
+    capability: Capability,
+    path: &Path,
+    force: bool,
+) -> ArtifactResult {
     debug_assert!(
         has_artifact_writer(agent),
         "install_one called for an agent without a writer: {agent:?}"
     );
 
-    let full_artifact = render_artifact(agent);
+    let full_artifact = render_artifact(agent, capability);
 
     let existing = if force {
         None
@@ -399,6 +551,7 @@ pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
             Err(e) => {
                 return ArtifactResult::Failed {
                     agent,
+                    capability,
                     error: RepographError::Io(e),
                 };
             }
@@ -420,6 +573,7 @@ pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
             if existing_body == &full_artifact && !force {
                 return ArtifactResult::Unchanged {
                     agent,
+                    capability,
                     path: path.to_path_buf(),
                 };
             }
@@ -432,6 +586,7 @@ pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
             SpliceOutcome::Identical if !force => {
                 return ArtifactResult::Unchanged {
                     agent,
+                    capability,
                     path: path.to_path_buf(),
                 };
             }
@@ -451,6 +606,7 @@ pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
             if let Err(e) = fs_err::create_dir_all(parent) {
                 return ArtifactResult::Failed {
                     agent,
+                    capability,
                     error: RepographError::Io(e),
                 };
             }
@@ -460,10 +616,12 @@ pub fn install_one(agent: AgentId, path: &Path, force: bool) -> ArtifactResult {
     match fs_err::write(path, to_write) {
         Ok(()) => ArtifactResult::Written {
             agent,
+            capability,
             path: path.to_path_buf(),
         },
         Err(e) => ArtifactResult::Failed {
             agent,
+            capability,
             error: RepographError::Io(e),
         },
     }
@@ -534,8 +692,12 @@ pub fn install_artifacts(
             });
             continue;
         }
-        let path = resolve_path(agent, scope, home, cwd);
-        results.push(install_one(agent, &path, force));
+        // Wholly-owned-file agents emit one artifact per capability (Consumer
+        // then Setup); flat-file agents emit a single combined artifact.
+        for &capability in capabilities_for(agent) {
+            let path = resolve_path(agent, capability, scope, home, cwd);
+            results.push(install_one(agent, capability, &path, force));
+        }
     }
     results
 }
@@ -606,6 +768,53 @@ mod tests {
                 "BODY missing the don't-mutate guidance"
             );
         }
+
+        #[test]
+        fn consumer_body_delegates_mutation_to_setup_skill() {
+            // The don't-mutate guidance must hand off to the setup skill by
+            // name, not dead-end at "ask the user".
+            assert!(
+                BODY.contains("repograph-setup"),
+                "consumer BODY must name the repograph-setup skill for mutation"
+            );
+        }
+
+        #[test]
+        fn setup_body_covers_the_mutating_surface() {
+            for required in [
+                "repograph add",
+                "repograph edit",
+                "repograph remove",
+                "repograph workspace",
+            ] {
+                assert!(
+                    SETUP_BODY.contains(required),
+                    "SETUP_BODY missing mutating command reference: {required}",
+                );
+            }
+        }
+
+        #[test]
+        fn setup_body_instructs_a_confirm_before_write_workflow() {
+            // The plan → confirm → execute → verify discipline must be present.
+            for required in ["Plan", "Confirm", "Execute", "Verify"] {
+                assert!(
+                    SETUP_BODY.contains(required),
+                    "SETUP_BODY missing workflow step: {required}",
+                );
+            }
+        }
+
+        #[test]
+        fn setup_summary_is_distinct_and_names_mutation_triggers() {
+            assert_ne!(SETUP_SUMMARY, SUMMARY, "summaries must differ");
+            for trigger in ["register", "workspace", "update"] {
+                assert!(
+                    SETUP_SUMMARY.contains(trigger),
+                    "SETUP_SUMMARY missing trigger phrasing: {trigger}",
+                );
+            }
+        }
     }
 
     // ---- path matrix ----
@@ -620,43 +829,64 @@ mod tests {
         #[test]
         fn path_matrix_v1() {
             let (home, cwd) = fixed_roots();
+            let cap = Capability::Consumer;
             assert_eq!(
-                resolve_path(AgentId::ClaudeCode, Scope::User, &home, &cwd),
+                resolve_path(AgentId::ClaudeCode, cap, Scope::User, &home, &cwd),
                 PathBuf::from("/home/u/.claude/skills/repograph/SKILL.md"),
             );
             assert_eq!(
-                resolve_path(AgentId::ClaudeCode, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::ClaudeCode, cap, Scope::Project, &home, &cwd),
                 PathBuf::from("/proj/.claude/skills/repograph/SKILL.md"),
             );
             assert_eq!(
-                resolve_path(AgentId::AgentsMd, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::AgentsMd, cap, Scope::Project, &home, &cwd),
                 PathBuf::from("/proj/AGENTS.md"),
             );
             assert_eq!(
-                resolve_path(AgentId::Cursor, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::Cursor, cap, Scope::Project, &home, &cwd),
                 PathBuf::from("/proj/.cursor/rules/repograph.mdc"),
             );
             assert_eq!(
-                resolve_path(AgentId::Aider, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::Aider, cap, Scope::Project, &home, &cwd),
                 PathBuf::from("/proj/CONVENTIONS.md"),
             );
             assert_eq!(
-                resolve_path(AgentId::Windsurf, Scope::User, &home, &cwd),
+                resolve_path(AgentId::Windsurf, cap, Scope::User, &home, &cwd),
                 PathBuf::from("/home/u/.codeium/windsurf/memories/repograph.md"),
             );
             assert_eq!(
-                resolve_path(AgentId::Windsurf, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::Windsurf, cap, Scope::Project, &home, &cwd),
                 PathBuf::from("/proj/.windsurfrules"),
+            );
+        }
+
+        #[test]
+        fn setup_capability_resolves_to_discrete_paths() {
+            let (home, cwd) = fixed_roots();
+            let cap = Capability::Setup;
+            assert_eq!(
+                resolve_path(AgentId::ClaudeCode, cap, Scope::User, &home, &cwd),
+                PathBuf::from("/home/u/.claude/skills/repograph-setup/SKILL.md"),
+            );
+            assert_eq!(
+                resolve_path(AgentId::Cursor, cap, Scope::Project, &home, &cwd),
+                PathBuf::from("/proj/.cursor/rules/repograph-setup.mdc"),
+            );
+            // Flat-file agents are capability-independent: one shared path.
+            assert_eq!(
+                resolve_path(AgentId::AgentsMd, cap, Scope::Project, &home, &cwd),
+                resolve_path(AgentId::AgentsMd, Capability::Consumer, Scope::Project, &home, &cwd),
             );
         }
 
         #[test]
         fn project_only_agents_fall_through_under_user_scope() {
             let (home, cwd) = fixed_roots();
+            let cap = Capability::Consumer;
             for agent in [AgentId::AgentsMd, AgentId::Aider, AgentId::Cursor] {
                 assert_eq!(
-                    resolve_path(agent, Scope::User, &home, &cwd),
-                    resolve_path(agent, Scope::Project, &home, &cwd),
+                    resolve_path(agent, cap, Scope::User, &home, &cwd),
+                    resolve_path(agent, cap, Scope::Project, &home, &cwd),
                     "{agent:?} should fall through under Scope::User",
                 );
             }
@@ -694,7 +924,7 @@ mod tests {
 
         #[test]
         fn render_artifact_claude_code_has_yaml_frontmatter() {
-            let out = render_artifact(AgentId::ClaudeCode);
+            let out = render_artifact(AgentId::ClaudeCode, Capability::Consumer);
             assert!(out.starts_with("---\nname: repograph\n"), "got: {out:?}");
             assert!(
                 out.contains(&format!("description: >-\n  {SUMMARY}\n")),
@@ -707,7 +937,7 @@ mod tests {
 
         #[test]
         fn render_artifact_cursor_has_mdc_frontmatter() {
-            let out = render_artifact(AgentId::Cursor);
+            let out = render_artifact(AgentId::Cursor, Capability::Consumer);
             assert!(out.starts_with("---\ndescription:"), "got: {out:?}");
             assert!(out.contains("globs: []"), "MDC frontmatter, got: {out:?}");
             assert!(out.contains(DELIMITER_BEGIN));
@@ -715,16 +945,21 @@ mod tests {
 
         #[test]
         fn render_artifact_agents_md_has_no_frontmatter() {
-            let out = render_artifact(AgentId::AgentsMd);
+            let out = render_artifact(AgentId::AgentsMd, Capability::Consumer);
             let expected_prefix = format!("{DELIMITER_BEGIN}\n# repograph");
             assert!(out.starts_with(&expected_prefix), "got: {out:?}");
             assert!(!out.starts_with("---"), "must not have YAML frontmatter");
+            // Flat-file agents inline both capabilities into one block.
+            assert!(
+                out.contains("# repograph-setup"),
+                "AGENTS.md must inline the setup body, got: {out:?}"
+            );
         }
 
         #[test]
         fn render_artifact_aider_and_windsurf_have_no_frontmatter() {
             for agent in [AgentId::Aider, AgentId::Windsurf] {
-                let out = render_artifact(agent);
+                let out = render_artifact(agent, Capability::Consumer);
                 assert!(
                     out.starts_with(DELIMITER_BEGIN),
                     "{agent:?} should start with the begin-delimiter",
@@ -742,8 +977,8 @@ mod tests {
                 AgentId::Aider,
                 AgentId::Windsurf,
             ] {
-                let a = render_artifact(agent);
-                let b = render_artifact(agent);
+                let a = render_artifact(agent, Capability::Consumer);
+                let b = render_artifact(agent, Capability::Consumer);
                 assert_eq!(a, b, "{agent:?} output must be byte-stable across calls");
             }
         }
@@ -751,7 +986,7 @@ mod tests {
         #[test]
         #[should_panic(expected = "copilot has no writer")]
         fn render_artifact_copilot_panics() {
-            let _ = render_artifact(AgentId::Copilot);
+            let _ = render_artifact(AgentId::Copilot, Capability::Consumer);
         }
     }
 
@@ -762,6 +997,55 @@ mod tests {
 
         fn block(inner: &str) -> String {
             format!("{DELIMITER_BEGIN}\n{inner}\n{DELIMITER_END}\n")
+        }
+
+        #[test]
+        fn begin_marker_carries_the_current_version_stamp() {
+            assert!(
+                DELIMITER_BEGIN.contains(&format!("v{ARTIFACT_BODY_VERSION} ")),
+                "DELIMITER_BEGIN must embed v{ARTIFACT_BODY_VERSION}, got {DELIMITER_BEGIN}"
+            );
+        }
+
+        #[test]
+        fn fresh_write_emits_versioned_marker() {
+            match splice_managed_section(None, "BODY") {
+                SpliceOutcome::FreshWrite(s) => {
+                    assert!(s.starts_with(DELIMITER_BEGIN), "fresh write stamps version");
+                    assert_eq!(s, block("BODY"));
+                }
+                other => panic!("expected FreshWrite, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn older_version_block_is_rewritten_in_place() {
+            // An existing block stamped with an older version, surrounded by user
+            // content, must be rewritten to the current marker — not duplicated.
+            let existing = format!(
+                "user-prefix\n<!-- repograph:begin v0 -->\nBODY\n{DELIMITER_END}\nuser-suffix\n"
+            );
+            match splice_managed_section(Some(&existing), "BODY") {
+                SpliceOutcome::Replaced(s) => {
+                    assert_eq!(
+                        s,
+                        format!("user-prefix\n{}user-suffix\n", block("BODY"))
+                    );
+                    assert_eq!(s.matches("repograph:begin").count(), 1, "no duplicate block");
+                }
+                other => panic!("expected Replaced for an older-version block, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn installed_version_parses_the_stamp() {
+            let installed = block("BODY");
+            assert_eq!(installed_version(&installed), Some(ARTIFACT_BODY_VERSION));
+            assert_eq!(installed_version("# no managed block here\n"), None);
+            assert_eq!(
+                installed_version("<!-- repograph:begin v7 -->\nx\n<!-- repograph:end -->\n"),
+                Some(7)
+            );
         }
 
         #[test]
@@ -849,21 +1133,24 @@ mod tests {
         fn fresh_install_writes_file() {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("nested/AGENTS.md");
-            let r = install_one(AgentId::AgentsMd, &path, false);
+            let r = install_one(AgentId::AgentsMd, Capability::Consumer, &path, false);
             match r {
                 ArtifactResult::Written { path: p, .. } => assert_eq!(p, path),
                 other => panic!("expected Written, got {other:?}"),
             }
-            assert_eq!(read(&path), render_artifact(AgentId::AgentsMd));
+            assert_eq!(
+                read(&path),
+                render_artifact(AgentId::AgentsMd, Capability::Consumer)
+            );
         }
 
         #[test]
         fn re_run_with_identical_body_returns_unchanged() {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("AGENTS.md");
-            let _ = install_one(AgentId::AgentsMd, &path, false);
+            let _ = install_one(AgentId::AgentsMd, Capability::Consumer, &path, false);
             let first = read(&path);
-            let r = install_one(AgentId::AgentsMd, &path, false);
+            let r = install_one(AgentId::AgentsMd, Capability::Consumer, &path, false);
             match r {
                 ArtifactResult::Unchanged { .. } => (),
                 other => panic!("expected Unchanged on re-run, got {other:?}"),
@@ -879,9 +1166,9 @@ mod tests {
         fn force_on_identical_returns_written() {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("AGENTS.md");
-            let _ = install_one(AgentId::AgentsMd, &path, false);
+            let _ = install_one(AgentId::AgentsMd, Capability::Consumer, &path, false);
             let first = read(&path);
-            let r = install_one(AgentId::AgentsMd, &path, true);
+            let r = install_one(AgentId::AgentsMd, Capability::Consumer, &path, true);
             match r {
                 ArtifactResult::Written { .. } => (),
                 other => panic!("expected Written under force, got {other:?}"),
@@ -898,7 +1185,7 @@ mod tests {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("AGENTS.md");
             fs_err::write(&path, "# My project\n\nCustom prose.\n").unwrap();
-            let r = install_one(AgentId::AgentsMd, &path, true);
+            let r = install_one(AgentId::AgentsMd, Capability::Consumer, &path, true);
             match r {
                 ArtifactResult::Written { .. } => (),
                 other => panic!("expected Written under force, got {other:?}"),
@@ -915,7 +1202,7 @@ mod tests {
         fn fresh_install_for_whole_file_owner_includes_frontmatter() {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("nested/SKILL.md");
-            let r = install_one(AgentId::ClaudeCode, &path, false);
+            let r = install_one(AgentId::ClaudeCode, Capability::Consumer, &path, false);
             assert!(matches!(r, ArtifactResult::Written { .. }));
             let body = read(&path);
             assert!(
@@ -930,9 +1217,9 @@ mod tests {
         fn re_run_whole_file_owner_is_unchanged() {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("SKILL.md");
-            let _ = install_one(AgentId::ClaudeCode, &path, false);
+            let _ = install_one(AgentId::ClaudeCode, Capability::Consumer, &path, false);
             let first = read(&path);
-            let r = install_one(AgentId::ClaudeCode, &path, false);
+            let r = install_one(AgentId::ClaudeCode, Capability::Consumer, &path, false);
             assert!(matches!(r, ArtifactResult::Unchanged { .. }));
             assert_eq!(read(&path), first);
         }
@@ -942,7 +1229,7 @@ mod tests {
             let dir = TempDir::new().unwrap();
             let path = dir.path().join("AGENTS.md");
             fs_err::write(&path, "# My project\n\nCustom prose.\n").unwrap();
-            let r = install_one(AgentId::AgentsMd, &path, false);
+            let r = install_one(AgentId::AgentsMd, Capability::Consumer, &path, false);
             assert!(matches!(r, ArtifactResult::Written { .. }));
             let after = read(&path);
             assert!(after.starts_with("# My project\n\nCustom prose.\n"));
@@ -957,7 +1244,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_one_result_per_agent_in_order() {
+        fn emits_per_capability_in_selection_then_capability_order() {
             let dir = TempDir::new().unwrap();
             let home = dir.path().join("home");
             let cwd = dir.path().join("proj");
@@ -965,9 +1252,34 @@ mod tests {
             fs_err::create_dir_all(&cwd).unwrap();
             let agents = vec![AgentId::AgentsMd, AgentId::ClaudeCode];
             let results = install_artifacts(&agents, Scope::User, &home, &cwd, false);
-            assert_eq!(results.len(), 2);
+            // Flat-file AgentsMd → 1 combined artifact; wholly-owned ClaudeCode
+            // → 2 (Consumer then Setup). Selection order is preserved.
+            assert_eq!(results.len(), 3);
             assert_eq!(results[0].agent(), AgentId::AgentsMd);
+            assert_eq!(results[0].capability(), Some(Capability::Consumer));
             assert_eq!(results[1].agent(), AgentId::ClaudeCode);
+            assert_eq!(results[1].capability(), Some(Capability::Consumer));
+            assert_eq!(results[2].agent(), AgentId::ClaudeCode);
+            assert_eq!(results[2].capability(), Some(Capability::Setup));
+        }
+
+        #[test]
+        fn wholly_owned_agent_writes_a_discrete_setup_file() {
+            let dir = TempDir::new().unwrap();
+            let home = dir.path().join("home");
+            let cwd = dir.path().join("proj");
+            fs_err::create_dir_all(&home).unwrap();
+            fs_err::create_dir_all(&cwd).unwrap();
+            let results = install_artifacts(&[AgentId::ClaudeCode], Scope::User, &home, &cwd, false);
+            assert_eq!(results.len(), 2);
+            // The setup skill lands at its own discrete path.
+            let setup_path = home.join(".claude/skills/repograph-setup/SKILL.md");
+            assert!(setup_path.exists(), "setup SKILL.md should be written");
+            let body = fs_err::read_to_string(&setup_path).unwrap();
+            assert!(
+                body.starts_with("---\nname: repograph-setup\n"),
+                "setup artifact carries its own frontmatter, got:\n{body}"
+            );
         }
 
         #[test]
@@ -1008,10 +1320,15 @@ mod tests {
                     &cwd,
                     false,
                 );
-                assert_eq!(results.len(), 2);
+                // AgentsMd → 1 (Failed); ClaudeCode → 2 (Consumer, Setup).
+                assert_eq!(results.len(), 3);
                 assert!(matches!(results[0], ArtifactResult::Failed { .. }));
                 assert!(matches!(
                     results[1],
+                    ArtifactResult::Written { .. } | ArtifactResult::Unchanged { .. }
+                ));
+                assert!(matches!(
+                    results[2],
                     ArtifactResult::Written { .. } | ArtifactResult::Unchanged { .. }
                 ));
                 // Restore mode so TempDir can clean up.
@@ -1037,10 +1354,12 @@ mod tests {
                 &cwd,
                 false,
             );
-            assert_eq!(results.len(), 3);
+            // Copilot → 1 Skipped; AgentsMd → 1 Written; ClaudeCode → 2 Written.
+            assert_eq!(results.len(), 4);
             assert!(matches!(results[0], ArtifactResult::Skipped { .. }));
             assert!(matches!(results[1], ArtifactResult::Written { .. }));
             assert!(matches!(results[2], ArtifactResult::Written { .. }));
+            assert!(matches!(results[3], ArtifactResult::Written { .. }));
         }
     }
 }

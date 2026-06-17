@@ -194,16 +194,26 @@ fn run_install(
 fn log_install_results(results: &[ArtifactResult]) {
     for r in results {
         match r {
-            ArtifactResult::Written { agent, path } => {
+            ArtifactResult::Written {
+                agent,
+                capability,
+                path,
+            } => {
                 tracing::info!(
                     agent = agent.as_str(),
+                    capability = capability.skill_name(),
                     path = %path.display(),
                     "artifact written",
                 );
             }
-            ArtifactResult::Unchanged { agent, path } => {
+            ArtifactResult::Unchanged {
+                agent,
+                capability,
+                path,
+            } => {
                 tracing::info!(
                     agent = agent.as_str(),
+                    capability = capability.skill_name(),
                     path = %path.display(),
                     "artifact unchanged",
                 );
@@ -211,9 +221,14 @@ fn log_install_results(results: &[ArtifactResult]) {
             ArtifactResult::Skipped { agent, reason } => {
                 tracing::info!(agent = agent.as_str(), reason = *reason, "artifact skipped",);
             }
-            ArtifactResult::Failed { agent, error } => {
+            ArtifactResult::Failed {
+                agent,
+                capability,
+                error,
+            } => {
                 tracing::warn!(
                     agent = agent.as_str(),
+                    capability = capability.skill_name(),
                     err = ?error,
                     "artifact failed",
                 );

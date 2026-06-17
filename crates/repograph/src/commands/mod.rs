@@ -4,6 +4,7 @@ pub mod add;
 pub mod completions;
 pub mod context;
 pub mod doctor;
+pub mod edit;
 pub mod find;
 pub mod index;
 pub mod init;

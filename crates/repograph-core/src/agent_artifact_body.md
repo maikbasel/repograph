@@ -44,7 +44,7 @@ Salient payload shapes:
 
 ## Things to avoid
 
-- Do not run mutating commands automatically. If the user appears to want to register a new repo, ask them to run `repograph add <path>` themselves rather than calling it. The same applies to `repograph remove` and `repograph workspace ...`. The registry is the user's to manage.
+- Do not run mutating commands automatically. This skill is read-only. When the user wants to register a repo, group repos into a workspace, or update an existing entry (`add`, `remove`, `edit`, `workspace …`), that is the job of the `repograph-setup` skill — defer to it rather than calling those commands here. The registry is the user's to manage.
 - Do not assume any specific repo is registered without checking. Prefer `repograph list --json` (or `repograph context --json` for the full surface) over hardcoded names.
 - Do not paste the full `agent_docs` payload back to the user verbatim; it's intended as input to your own reasoning. Summarize when you reply.
 - Do not call repograph in a loop. One `repograph context --json` returns every registered repo's context in one envelope; iterating per repo is slower and wasteful.

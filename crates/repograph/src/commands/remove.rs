@@ -5,10 +5,16 @@ use std::path::Path;
 use clap::Parser;
 use repograph_core::{Config, RepographError};
 
+use crate::output::{self, Mutation};
+
 #[derive(Debug, Parser)]
 pub struct Args {
     /// Name of the registered repository to remove.
     pub name: String,
+
+    /// Emit a JSON confirmation of the removal to stdout.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Remove the named repository from the config.
@@ -27,5 +33,9 @@ pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
     config.remove_repo(&args.name)?;
     config.save(config_dir)?;
     tracing::info!(repo = %args.name, "removed");
+
+    if args.json {
+        output::render_mutation(&Mutation::Remove { name: &args.name })?;
+    }
     Ok(())
 }
