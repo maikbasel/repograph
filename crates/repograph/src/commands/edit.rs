@@ -38,16 +38,6 @@ pub struct Args {
     pub json: bool,
 }
 
-impl Args {
-    /// Whether any change flag was supplied. An edit with none is a usage error.
-    const fn has_change(&self) -> bool {
-        self.new_name.is_some()
-            || self.description.is_some()
-            || self.stack.is_some()
-            || self.path.is_some()
-    }
-}
-
 /// Apply the requested in-place edits to the named repo.
 ///
 /// # Errors
@@ -63,7 +53,21 @@ impl Args {
 pub fn run(args: Args, config_dir: &Path) -> Result<(), RepographError> {
     tracing::debug!("edit: start");
 
-    if !args.has_change() {
+    // Normalize each flag into its effective edit. Empty values are filtered
+    // here so the usage-error gate below reflects what would *actually* change:
+    // an empty `--name` is not a rename (names must be non-empty), an empty
+    // `--description` clears it, and empty `--stack` tags are dropped (so
+    // `--stack ""` clears the stack, mirroring `--description ""`).
+    let new_name = args.new_name.filter(|s| !s.is_empty());
+    // `Some(empty)` clears; `Some(text)` sets; `None` leaves unchanged.
+    let description = args.description.map(|s| (!s.is_empty()).then_some(s));
+    let stack = args
+        .stack
+        .map(|tags| tags.into_iter().filter(|s| !s.is_empty()).collect());
+
+    // Reject an invocation that would change nothing (no flags, or only empty
+    // `--name`) as a usage error (exit 2) before any I/O.
+    if new_name.is_none() && description.is_none() && stack.is_none() && args.path.is_none() {
         return Err(RepographError::UsageError(
             "edit requires at least one of --name, --description, --stack, --path".to_string(),
         ));
@@ -77,10 +81,9 @@ pub fn run(args: Args, config_dir: &Path) -> Result<(), RepographError> {
     };
 
     let edit = RepoEdit {
-        new_name: args.new_name.filter(|s| !s.is_empty()),
-        // `Some(empty)` clears; `Some(text)` sets; `None` leaves unchanged.
-        description: args.description.map(|s| (!s.is_empty()).then_some(s)),
-        stack: args.stack,
+        new_name,
+        description,
+        stack,
         path,
     };
 

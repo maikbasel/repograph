@@ -90,6 +90,63 @@ fn edit_with_no_change_flags_is_usage_error() {
 }
 
 #[test]
+fn edit_with_only_empty_name_is_usage_error() {
+    // An empty `--name` is not a rename (names must be non-empty), so an edit
+    // carrying only `--name ""` changes nothing and must be a usage error
+    // rather than a silent no-op write.
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = fixture_git_repo(tmp.path(), "foo");
+    add_repo(&config_dir, &repo, "foo");
+
+    repograph_cmd(&config_dir)
+        .arg("edit")
+        .arg("foo")
+        .arg("--name")
+        .arg("")
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn edit_empty_stack_clears_the_tags() {
+    // `--stack ""` drops all tags, mirroring how `--description ""` clears the
+    // description.
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = fixture_git_repo(tmp.path(), "foo");
+    add_repo(&config_dir, &repo, "foo");
+
+    repograph_cmd(&config_dir)
+        .arg("edit")
+        .arg("foo")
+        .arg("--stack")
+        .arg("rust,cli")
+        .assert()
+        .success();
+    repograph_cmd(&config_dir)
+        .arg("edit")
+        .arg("foo")
+        .arg("--stack")
+        .arg("")
+        .assert()
+        .success();
+
+    let out = repograph_cmd(&config_dir)
+        .arg("list")
+        .arg("--json")
+        .assert()
+        .success();
+    let repos = parse_repos_json(&out.get_output().stdout);
+    assert_eq!(repos.len(), 1);
+    assert!(
+        repos[0]["stack"].as_array().unwrap().is_empty(),
+        "stack should be cleared, got: {}",
+        repos[0]["stack"]
+    );
+}
+
+#[test]
 fn edit_to_non_git_path_returns_exit_3() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
