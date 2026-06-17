@@ -107,24 +107,25 @@ In an interactive terminal, repograph also prints a one-line notice on **stderr*
 
 | Command | Purpose |
 |---------|---------|
-| `repograph add <path>` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. |
+| `repograph add <path> [--name <n>] [--description <d>] [--stack <csv>] [--json]` | Register a local git repository (validated via `git2`). Stores the canonical absolute path. `--json` emits a `{ "action": "add", "repo": {…} }` confirmation on stdout; without it stdout stays empty (confirmation on stderr). |
 | `repograph completions <shell>` | Emit a static completion script for `bash`, `zsh`, `fish`, `powershell`, or `elvish` on stdout. Generated against the live `Cli` so the script never drifts from the actual command surface. |
 | `repograph context [<repos>…] [--workspace <name>] [--json]` | Aggregate per-repo agent docs (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/*.md`, `.cursorrules`, `CONVENTIONS.md`, `.windsurfrules`, `.github/copilot-instructions.md`) into one payload. JSON when piped or `--json`; Markdown when stdout is a TTY (paste-ready into a chat). Per-repo / per-file failures surface as inline warnings, not aborts. |
-| `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config, and search-index freshness. Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network. |
+| `repograph doctor [--json]` | Read-only health check over the config and every registered repo: missing paths, dangling workspace members, missing agent docs, malformed config, search-index freshness, and skill-artifact freshness (missing/stale installed skills → "run `repograph init`"). Coloured `comfy-table` summary on TTY; `schema_version: 1` JSON envelope when piped or `--json`. Zero-network; never mutates. |
+| `repograph edit <name> [--name <new>] [--description <d>] [--stack <csv>] [--path <p>] [--json]` | Update a registered repo in place — rename, re-describe, retag, or repoint its path. Non-lossy: renaming rewrites workspace memberships so groupings survive (unlike remove-then-add). `--json` emits an `{ "action": "edit", … }` confirmation. |
 | `repograph index [--workspace <name>] [--semantic]` | Build or refresh the cross-repo search index over the git-tracked files of registered repos (or one workspace). Git-aware and incremental: only changed files are re-processed, removed files are purged. `--semantic` adds local embeddings (requires a build with the `semantic` feature; otherwise lexical-only with a stderr notice). No stdout payload; a summary and warnings go to stderr. |
 | `repograph find "<query>" [--workspace <name>] [--limit <n>] [--semantic] [--json]` | Find code across all registered repos (or one workspace) by meaning or keyword — locate a reference implementation when you're not sure which repo holds it. Hybrid retrieval (BM25 + optional semantic). Ranked `comfy-table` on TTY; stable `{ schema_version, query, semantic_used, degraded, hits: [...] }` JSON envelope when piped or `--json`. Empty results are success (exit 0); a never-built index is exit 3. |
 | `repograph init` | Interactive setup: pick the agent toolchain(s) you use; bulk-register repos found under your projects root (multiselect) and assign them to a workspace in one pass; add more at custom paths. Re-running shows a settings panel for editing the selection or resetting everything. Non-interactive: `--no-prompt --agents <list>`. |
 | `repograph list [--json] [--workspace <name>]` | List the registered repositories. `--workspace` restricts output to repos in the named workspace. Renders a table on a TTY, JSON envelope when piped or `--json` is set. |
-| `repograph remove <name>` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. |
+| `repograph remove <name> [--json]` | Remove a registered repository by name. Workspace memberships are preserved as dangling references; surface them via `workspace show`. To change an entry without dropping it, prefer `repograph edit`. `--json` emits a `{ "action": "remove", "name": … }` confirmation. |
 | `repograph status [<names>…] [--workspace <name>] [--json] [--fetch]` | Report branch, upstream, ahead/behind, and working-tree state across one, many, or all registered repos. Read-only; zero-network unless `--fetch` is set. |
 | `repograph switch <name>` | Emit `cd <path>` for the named registered repo on stdout, shell-eval-safe (single-quoted when the path contains whitespace or shell metacharacters). Pair with the `rg-cd` shell function below. |
 | `repograph update [--check]` | Update repograph in place when it was installed via the shell/PowerShell installer or a tarball (checksum-verified). Homebrew / `cargo install` builds are left untouched — it prints the right package-manager command instead. `--check` reports availability without installing. |
-| `repograph workspace create <name> [--description <text>]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. |
-| `repograph workspace rm <name>` | Delete a workspace. Registered repos are not touched. |
+| `repograph workspace create <name> [--description <text>] [--json]` | Create an empty workspace. Names must match `^[a-z0-9][a-z0-9-]{0,62}$` and may not be `default`/`all`/`none`. `--json` emits a `{ "action": "workspace.create", … }` confirmation. |
+| `repograph workspace rm <name> [--json]` | Delete a workspace. Registered repos are not touched. `--json` confirms with `action: "workspace.rm"`. |
 | `repograph workspace ls [--json]` | List the registered workspaces with name, description, and member count. |
 | `repograph workspace show <name> [--json]` | Show one workspace's resolved live members and dangling references. |
-| `repograph workspace add <workspace> <repo>…` | Attach one or more registered repos to a workspace. Idempotent on duplicates; atomic on missing repos. |
-| `repograph workspace remove <workspace> <repo>…` | Detach repos from a workspace. Does not deregister the repos themselves. |
+| `repograph workspace add <workspace> <repo>… [--json]` | Attach one or more registered repos to a workspace. Idempotent on duplicates; atomic on missing repos. `--json` confirms with `action: "workspace.add"` and the affected repos. |
+| `repograph workspace remove <workspace> <repo>… [--json]` | Detach repos from a workspace. Does not deregister the repos themselves. `--json` confirms with `action: "workspace.remove"`. |
 
 `add` accepts `--name`, `--description`, and `--stack <a,b,c>` (comma-separated tags). When `--name` is omitted, the path's basename is used.
 
@@ -205,18 +206,20 @@ Overwrite existing artifacts even outside the managed delimiter block. Without t
 
 #### Per-agent artifact installation
 
-`repograph init` writes a native instruction file for each selected agent so the agent's runtime picks it up automatically and learns when to invoke `repograph`. The path matrix is fixed by each agent's convention:
+`repograph init` writes native instruction files for each selected agent so the agent's runtime picks them up automatically and learns when to invoke `repograph`. Two skills are installed: **`repograph`** (read-only: list, status, context, switch, find) and **`repograph-setup`** (mutating: register repos, group workspaces, edit entries — behind a confirm-before-write workflow). The path matrix is fixed by each agent's convention:
 
-| Agent ID      | User-scope path                                       | Project-scope path                     |
+| Agent ID      | User-scope path (`repograph` / `repograph-setup`)                                       | Project-scope path                     |
 |---------------|-------------------------------------------------------|----------------------------------------|
-| `claude-code` | `~/.claude/skills/repograph/SKILL.md`                 | `<cwd>/.claude/skills/repograph/SKILL.md` |
-| `agents-md`   | (project-only)                                        | `<cwd>/AGENTS.md`                      |
-| `cursor`      | (project-only)                                        | `<cwd>/.cursor/rules/repograph.mdc`    |
-| `aider`       | (project-only)                                        | `<cwd>/CONVENTIONS.md`                 |
-| `windsurf`    | `~/.codeium/windsurf/memories/repograph.md`           | `<cwd>/.windsurfrules`                 |
+| `claude-code` | `~/.claude/skills/repograph/SKILL.md` · `~/.claude/skills/repograph-setup/SKILL.md`  | `<cwd>/.claude/skills/{repograph,repograph-setup}/SKILL.md` |
+| `agents-md`   | (project-only)                                        | `<cwd>/AGENTS.md` (both skills inlined) |
+| `cursor`      | (project-only)                                        | `<cwd>/.cursor/rules/repograph.mdc` · `repograph-setup.mdc` |
+| `aider`       | (project-only)                                        | `<cwd>/CONVENTIONS.md` (both skills inlined) |
+| `windsurf`    | `~/.codeium/windsurf/memories/repograph.md` (both inlined) | `<cwd>/.windsurfrules` (both inlined) |
 | `copilot`     | (deferred, no v1 writer)                             | (deferred, no v1 writer)              |
 
-Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a delimiter pair (`<!-- repograph:begin --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs. Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one agent does not abort the others; the agent-selection persistence already succeeded.
+Agents that own a whole file (Claude, Cursor) get a discrete file per skill; flat-file agents (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) inline both skills into their single managed block.
+
+Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a version-stamped delimiter pair (`<!-- repograph:begin v1 --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs (an older version stamp is rewritten in place). Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one artifact does not abort the others; the agent-selection persistence already succeeded. `repograph doctor` reports any missing or stale (older-version) skill artifact as a `warn` pointing at `repograph init` — it never rewrites them itself.
 
 Selecting `copilot` is valid but writes no file in v1; the agent's instruction format varies across surfaces (repo-level, editor-level, Copilot Workspace) and no single converged path covers them yet.
 
@@ -442,6 +445,7 @@ Completions are generated against the live `Cli` struct, so they match the subco
 | `RepoIsGitRepo`           | Per repo: the path opens as a git repository (gated by `RepoPathExists`).         | `error`          |
 | `WorkspaceMembersResolve` | Per workspace member: the member name resolves to a registered repo.              | `warn`           |
 | `AgentDocPresent`         | Per repo × per selected agent: at least one file matches the pattern set.         | `warn`           |
+| `SkillArtifactFresh`      | Per selected agent × skill: the installed artifact exists and its version stamp matches this binary. Read-only — names `repograph init` as the fix, never rewrites. | `warn`           |
 
 Every check that passes emits an `ok` finding too, so you can audit *which* checks ran against *which* targets without consulting the catalog separately.
 

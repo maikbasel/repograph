@@ -20,6 +20,10 @@ fn init_agents(config_dir: &Path, agents: &str) {
         .expect("config_dir always lives under a tempdir");
     repograph_cmd(config_dir)
         .current_dir(cwd)
+        // Pin HOME so the install (and the later doctor freshness check) resolve
+        // skill-artifact paths under the fixture, never the dev's real home.
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
         .arg("init")
         .arg("--no-prompt")
         .arg("--agents")
@@ -59,7 +63,15 @@ fn add_to_workspace(config_dir: &Path, workspace: &str, repos: &[&str]) {
 }
 
 fn run_doctor_json(config_dir: &Path) -> (serde_json::Value, i32) {
+    let cwd = config_dir
+        .parent()
+        .expect("config_dir always lives under a tempdir");
     let out = repograph_cmd(config_dir)
+        // Same HOME/cwd the install used, so the read-only skill freshness check
+        // resolves the artifacts the fixture wrote — and never the real home.
+        .current_dir(cwd)
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
         .arg("doctor")
         .arg("--json")
         .assert();
@@ -108,6 +120,37 @@ fn clean_config_emits_all_ok_and_exit_0() {
     assert!(v["summary"]["ok"].as_u64().unwrap() > 0);
     // The search-index check is present and healthy.
     assert_eq!(find_findings(&v, "SearchIndex", "ok").len(), 1);
+    // Both skill artifacts (consumer + setup) are present and current.
+    assert_eq!(find_findings(&v, "SkillArtifactFresh", "ok").len(), 2);
+}
+
+#[test]
+fn missing_skill_artifact_emits_warn_with_init_hint() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    init_agents(&config_dir, "claude-code");
+    // Remove the installed setup skill so the freshness check sees it missing.
+    let cwd = config_dir.parent().unwrap();
+    std::fs::remove_dir_all(cwd.join(".claude/skills/repograph-setup")).unwrap();
+
+    let (v, code) = run_doctor_json(&config_dir);
+    assert_eq!(code, 0, "a missing skill artifact is a warn, not an error");
+    let warns = find_findings(&v, "SkillArtifactFresh", "warn");
+    assert_eq!(warns.len(), 1, "the removed setup skill warns");
+    assert!(
+        warns[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph init"),
+        "warning must point at `repograph init`"
+    );
+    assert!(
+        warns[0]["target"]
+            .as_str()
+            .unwrap()
+            .contains("repograph-setup"),
+        "target names the missing capability"
+    );
 }
 
 #[test]

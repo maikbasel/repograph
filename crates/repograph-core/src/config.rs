@@ -29,6 +29,24 @@ pub struct Repo {
     pub stack: Vec<String>,
 }
 
+/// A set of in-place changes to apply to a registered repo via
+/// [`Config::edit_repo`]. Every field is opt-in: `None` (or the outer `None`
+/// for `description`) leaves the current value untouched.
+///
+/// - `new_name`: rename the entry; workspace memberships are rewritten so
+///   groupings survive the rename.
+/// - `description`: `Some(Some(text))` sets it, `Some(None)` clears it, `None`
+///   leaves it unchanged.
+/// - `stack`: `Some(vec)` replaces the stack wholesale; `None` leaves it.
+/// - `path`: a pre-validated, canonicalized path; `Some(p)` replaces it.
+#[derive(Debug, Default, Clone)]
+pub struct RepoEdit {
+    pub new_name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub stack: Option<Vec<String>>,
+    pub path: Option<PathBuf>,
+}
+
 /// A named grouping of registered repositories.
 ///
 /// The `name` is the map key in [`Config::workspaces`] — it does not appear
@@ -226,6 +244,104 @@ impl Config {
                 kind: "repo",
                 name: name.to_string(),
             })
+    }
+
+    /// Update a registered repo in place, returning the resulting `(name, repo)`.
+    ///
+    /// Unlike a remove-then-add, this preserves workspace memberships: a rename
+    /// (`edit.new_name`) rewrites every `workspace.members` entry that pointed at
+    /// the old name, so groupings survive with no dangling references. All
+    /// validation runs before any mutation, so an error leaves the config
+    /// untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepographError::NotFound`] with `kind = "repo"` when `name` is
+    /// not registered; [`RepographError::Conflict`] with `kind = "name"` when
+    /// `new_name` collides with a different existing repo, or `kind = "path"`
+    /// when `edit.path` is already registered under a different name.
+    pub fn edit_repo(
+        &mut self,
+        name: &str,
+        edit: RepoEdit,
+    ) -> Result<(String, Repo), RepographError> {
+        if !self.repos.contains_key(name) {
+            return Err(RepographError::NotFound {
+                kind: "repo",
+                name: name.to_string(),
+            });
+        }
+
+        // A rename to the same name is a no-op rename, not a conflict.
+        let rename_to = edit
+            .new_name
+            .as_deref()
+            .filter(|n| *n != name)
+            .map(ToString::to_string);
+
+        // Validate before mutating: target name must be free.
+        if let Some(new_name) = &rename_to {
+            if self.repos.contains_key(new_name) {
+                return Err(RepographError::Conflict {
+                    kind: "name",
+                    name: new_name.clone(),
+                });
+            }
+        }
+        // Validate before mutating: a new path must not collide with another repo.
+        if let Some(new_path) = &edit.path {
+            if let Some((existing, _)) = self
+                .repos
+                .iter()
+                .find(|(k, r)| k.as_str() != name && &r.path == new_path)
+            {
+                return Err(RepographError::Conflict {
+                    kind: "path",
+                    name: existing.clone(),
+                });
+            }
+        }
+
+        // All checks passed — apply field updates to the (possibly soon-renamed) entry.
+        // Safe to unwrap-free: presence was verified above.
+        let mut repo = self
+            .repos
+            .remove(name)
+            .ok_or_else(|| RepographError::NotFound {
+                kind: "repo",
+                name: name.to_string(),
+            })?;
+        if let Some(description) = edit.description {
+            repo.description = description.filter(|s| !s.is_empty());
+        }
+        if let Some(stack) = edit.stack {
+            repo.stack = stack;
+        }
+        if let Some(path) = edit.path {
+            repo.path = path;
+        }
+
+        let final_name = rename_to.clone().unwrap_or_else(|| name.to_string());
+        self.repos.insert(final_name.clone(), repo.clone());
+
+        // Rewrite workspace memberships on rename so groupings don't dangle.
+        if let Some(new_name) = &rename_to {
+            for ws in self.workspaces.values_mut() {
+                let mut touched = false;
+                for member in &mut ws.members {
+                    if member == name {
+                        member.clone_from(new_name);
+                        touched = true;
+                    }
+                }
+                if touched {
+                    ws.members.sort();
+                    ws.members.dedup();
+                }
+            }
+        }
+
+        Ok((final_name, repo))
     }
 
     /// Create an empty workspace under `name` with an optional description.
@@ -1003,5 +1119,157 @@ mod tests {
         .unwrap();
         let cfg = Config::load(tmp.path()).unwrap();
         assert!(cfg.workspaces.contains_key("acme"));
+    }
+
+    #[test]
+    fn edit_repo_updates_description_and_stack_in_place() {
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        let (name, repo) = cfg
+            .edit_repo(
+                "foo",
+                RepoEdit {
+                    description: Some(Some("new".into())),
+                    stack: Some(vec!["rust".into(), "cli".into()]),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(name, "foo");
+        assert_eq!(repo.description.as_deref(), Some("new"));
+        assert_eq!(repo.stack, vec!["rust", "cli"]);
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().path,
+            PathBuf::from("/tmp/foo")
+        );
+    }
+
+    #[test]
+    fn edit_repo_empty_description_clears_it() {
+        let mut cfg = Config::default();
+        cfg.add_repo(
+            "foo".into(),
+            Repo {
+                path: PathBuf::from("/tmp/foo"),
+                description: Some("old".into()),
+                stack: vec![],
+            },
+        )
+        .unwrap();
+        cfg.edit_repo(
+            "foo",
+            RepoEdit {
+                description: Some(None),
+                ..RepoEdit::default()
+            },
+        )
+        .unwrap();
+        assert!(cfg.repos.get("foo").unwrap().description.is_none());
+    }
+
+    #[test]
+    fn edit_repo_rename_preserves_workspace_membership() {
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        cfg.create_workspace("acme".into(), None).unwrap();
+        cfg.add_members("acme", &["foo".into()]).unwrap();
+
+        let (name, _) = cfg
+            .edit_repo(
+                "foo",
+                RepoEdit {
+                    new_name: Some("bar".into()),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(name, "bar");
+        assert!(cfg.repos.contains_key("bar"));
+        assert!(!cfg.repos.contains_key("foo"));
+        // The workspace now references `bar` as a live member, no dangling.
+        let (live, dangling) = cfg.resolve_workspace("acme").unwrap();
+        assert!(dangling.is_empty(), "rename left a dangling member");
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].0, "bar");
+    }
+
+    #[test]
+    fn edit_repo_rename_to_existing_name_conflicts() {
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        cfg.add_repo("bar".into(), make("/tmp/bar")).unwrap();
+        let err = cfg
+            .edit_repo(
+                "foo",
+                RepoEdit {
+                    new_name: Some("bar".into()),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, RepographError::Conflict { kind: "name", .. }));
+        // No mutation: foo still present, bar untouched.
+        assert!(cfg.repos.contains_key("foo"));
+        assert_eq!(
+            cfg.repos.get("bar").unwrap().path,
+            PathBuf::from("/tmp/bar")
+        );
+    }
+
+    #[test]
+    fn edit_repo_nonexistent_returns_not_found() {
+        let mut cfg = Config::default();
+        let err = cfg
+            .edit_repo(
+                "ghost",
+                RepoEdit {
+                    description: Some(Some("x".into())),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, RepographError::NotFound { kind: "repo", .. }));
+    }
+
+    #[test]
+    fn edit_repo_path_conflict_returns_conflict() {
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        cfg.add_repo("bar".into(), make("/tmp/bar")).unwrap();
+        let err = cfg
+            .edit_repo(
+                "foo",
+                RepoEdit {
+                    path: Some(PathBuf::from("/tmp/bar")),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, RepographError::Conflict { kind: "path", .. }));
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().path,
+            PathBuf::from("/tmp/foo")
+        );
+    }
+
+    #[test]
+    fn edit_repo_rename_to_same_name_is_noop_not_conflict() {
+        let mut cfg = Config::default();
+        cfg.add_repo("foo".into(), make("/tmp/foo")).unwrap();
+        let (name, _) = cfg
+            .edit_repo(
+                "foo",
+                RepoEdit {
+                    new_name: Some("foo".into()),
+                    description: Some(Some("d".into())),
+                    ..RepoEdit::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(name, "foo");
+        assert_eq!(
+            cfg.repos.get("foo").unwrap().description.as_deref(),
+            Some("d")
+        );
     }
 }

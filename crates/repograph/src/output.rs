@@ -40,6 +40,72 @@ struct ListEntry<'a> {
     stack: &'a [String],
 }
 
+/// The resulting registry entry echoed back in a mutation confirmation.
+#[derive(Serialize)]
+pub struct RepoConfirmation<'a> {
+    pub name: &'a str,
+    pub path: &'a std::path::Path,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    pub stack: &'a [String],
+}
+
+impl<'a> RepoConfirmation<'a> {
+    /// Build a confirmation view over a registered repo and its name.
+    #[must_use]
+    pub fn new(name: &'a str, repo: &'a Repo) -> Self {
+        Self {
+            name,
+            path: &repo.path,
+            description: repo.description.as_deref(),
+            stack: &repo.stack,
+        }
+    }
+}
+
+/// A structured, machine-verifiable confirmation of a committed registry
+/// mutation, emitted to stdout only when the command was invoked with `--json`.
+/// The `action` discriminator names the operation; the remaining fields carry
+/// the affected entity. Emitted only after the change is persisted.
+#[derive(Serialize)]
+#[serde(tag = "action")]
+pub enum Mutation<'a> {
+    #[serde(rename = "add")]
+    Add { repo: RepoConfirmation<'a> },
+    #[serde(rename = "edit")]
+    Edit { repo: RepoConfirmation<'a> },
+    #[serde(rename = "remove")]
+    Remove { name: &'a str },
+    #[serde(rename = "workspace.create")]
+    WorkspaceCreate { workspace: &'a str },
+    #[serde(rename = "workspace.add")]
+    WorkspaceAdd {
+        workspace: &'a str,
+        repos: &'a [String],
+    },
+    #[serde(rename = "workspace.remove")]
+    WorkspaceRemove {
+        workspace: &'a str,
+        repos: &'a [String],
+    },
+    #[serde(rename = "workspace.rm")]
+    WorkspaceRm { workspace: &'a str },
+}
+
+/// Write a mutation confirmation as a single-line JSON object to stdout.
+/// Callers invoke this only when `--json` was passed; without it, mutators stay
+/// silent on stdout and surface their confirmation on stderr via `tracing`.
+///
+/// # Errors
+///
+/// Returns [`RepographError::Io`] when writing to stdout fails.
+pub fn render_mutation(mutation: &Mutation<'_>) -> Result<(), RepographError> {
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(&mut stdout, mutation).map_err(serde_json_to_repograph)?;
+    stdout.write_all(b"\n")?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct ListEnvelope<'a> {
     repos: &'a [ListEntry<'a>],
@@ -667,6 +733,7 @@ const fn check_label(c: Check) -> &'static str {
         Check::RepoIsGitRepo => "RepoIsGitRepo",
         Check::WorkspaceMembersResolve => "WorkspaceMembersResolve",
         Check::AgentDocPresent => "AgentDocPresent",
+        Check::SkillArtifactFresh => "SkillArtifactFresh",
         Check::SearchIndex => "SearchIndex",
     }
 }

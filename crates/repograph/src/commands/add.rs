@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use repograph_core::{Config, Repo, RepographError, validate_git_repo};
 
+use crate::output::{self, Mutation, RepoConfirmation};
+
 #[derive(Debug, Parser)]
 pub struct Args {
     /// Path to a local git repository.
@@ -21,6 +23,10 @@ pub struct Args {
     /// Comma-separated technology tags (e.g. `--stack rust,cli`).
     #[arg(long, value_delimiter = ',')]
     pub stack: Vec<String>,
+
+    /// Emit a JSON confirmation of the registered entry to stdout.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Register the repo at `args.path` into the config under `args.name` (or
@@ -54,6 +60,14 @@ pub fn run(args: Args, config_dir: &Path) -> Result<(), RepographError> {
     config.save(config_dir)?;
 
     tracing::info!(repo = %name, "registered");
+
+    if args.json {
+        if let Some(repo) = config.repos().get(&name) {
+            output::render_mutation(&Mutation::Add {
+                repo: RepoConfirmation::new(&name, repo),
+            })?;
+        }
+    }
     Ok(())
 }
 

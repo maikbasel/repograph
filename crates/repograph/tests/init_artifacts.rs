@@ -96,7 +96,7 @@ fn claude_code_user_scope_writes_skill_md_under_home() {
         "description should steer the agent away from manual find/git, got:\n{body}",
     );
     assert!(
-        body.contains("<!-- repograph:begin -->"),
+        body.contains("<!-- repograph:begin"),
         "missing begin delimiter, got:\n{body}",
     );
     assert!(
@@ -110,6 +110,52 @@ fn claude_code_user_scope_writes_skill_md_under_home() {
     assert!(
         body.contains("repograph find"),
         "managed body should teach the cross-repo `repograph find`, got:\n{body}",
+    );
+}
+
+#[test]
+fn claude_code_writes_both_consumer_and_setup_skills() {
+    let f = InitFixture::new();
+    f.cmd()
+        .args(["init", "--no-prompt", "--agents", "claude-code"])
+        .args(["--scope", "user"])
+        .assert()
+        .success();
+
+    let consumer = f.home.join(".claude/skills/repograph/SKILL.md");
+    let setup = f.home.join(".claude/skills/repograph-setup/SKILL.md");
+    assert!(consumer.exists(), "consumer skill missing");
+    assert!(setup.exists(), "setup skill missing");
+
+    let setup_body = read(&setup);
+    assert!(
+        setup_body.starts_with("---\nname: repograph-setup\n"),
+        "setup skill carries its own frontmatter, got:\n{setup_body}"
+    );
+    assert!(
+        setup_body.contains("repograph edit") && setup_body.contains("repograph workspace"),
+        "setup skill documents the mutating surface, got:\n{setup_body}"
+    );
+}
+
+#[test]
+fn agents_md_inlines_both_capabilities_in_one_block() {
+    let f = InitFixture::new();
+    f.cmd()
+        .args(["init", "--no-prompt", "--agents", "agents-md"])
+        .assert()
+        .success();
+
+    let target = f.proj.join("AGENTS.md");
+    let body = read(&target);
+    assert_eq!(
+        body.matches("repograph:begin").count(),
+        1,
+        "flat-file agent must have a single managed block, got:\n{body}"
+    );
+    assert!(
+        body.contains("# repograph\n") && body.contains("# repograph-setup\n"),
+        "AGENTS.md must inline both consumer and setup bodies, got:\n{body}"
     );
 }
 
@@ -143,7 +189,7 @@ fn agents_md_no_scope_required_writes_to_cwd() {
     assert!(target.exists(), "expected {target:?} to exist");
     let body = read(&target);
     assert!(
-        body.starts_with("<!-- repograph:begin -->"),
+        body.starts_with("<!-- repograph:begin"),
         "agents-md begins with the delimiter (no frontmatter), got:\n{body}",
     );
     assert!(body.contains("# repograph"), "managed heading present");
@@ -288,7 +334,7 @@ fn pre_existing_user_content_is_preserved() {
         "user prose preserved at top, got:\n{body}",
     );
     assert!(
-        body.contains("<!-- repograph:begin -->"),
+        body.contains("<!-- repograph:begin"),
         "managed block appended, got:\n{body}",
     );
     assert!(
@@ -310,7 +356,7 @@ fn force_overwrites_pre_existing_user_content() {
 
     let body = read(&target);
     assert!(
-        body.starts_with("<!-- repograph:begin -->"),
+        body.starts_with("<!-- repograph:begin"),
         "force replaced the file with the bare delimited block, got:\n{body}",
     );
     assert!(
@@ -396,7 +442,7 @@ fn windsurf_user_scope_writes_under_codeium_dir() {
     let target = f.home.join(".codeium/windsurf/memories/repograph.md");
     assert!(target.exists(), "windsurf user-scope path missing");
     let body = read(&target);
-    assert!(body.contains("<!-- repograph:begin -->"));
+    assert!(body.contains("<!-- repograph:begin"));
 }
 
 #[test]

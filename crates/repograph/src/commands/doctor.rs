@@ -17,6 +17,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::output::{OutputMode, render_doctor};
+use crate::prompt::host_home;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -71,6 +72,18 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
             report.with_index_check(&status)
         }
         Err(_) => report,
+    };
+
+    // Read-only freshness check for the installed skill artifacts. Resolves the
+    // expected paths under the host home / cwd and compares the version stamp;
+    // it never writes. Skipped when home is unresolvable or `[agents]` is absent
+    // (an empty selection produces no findings).
+    let report = match (&load, host_home(), std::env::current_dir()) {
+        (Ok(cfg), Some(home), Ok(cwd)) => {
+            let selected = cfg.agents().map_or(&[][..], |a| a.selected.as_slice());
+            report.with_skill_artifact_check(selected, &home, &cwd)
+        }
+        _ => report,
     };
 
     render_doctor(mode, &report)?;
