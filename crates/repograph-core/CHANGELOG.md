@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/maikbasel/repograph/compare/repograph-core-v0.3.1...repograph-core-v0.4.0) - 2026-07-01
+
+### Added
+
+- add repograph-setup management skill + edit command ([#17](https://github.com/maikbasel/repograph/pull/17))
+- *(find)* expose retrieval mode in JSON envelope and verify semantic path ([#16](https://github.com/maikbasel/repograph/pull/16))
+- cross-repo hybrid search (repograph index + find) ([#12](https://github.com/maikbasel/repograph/pull/12))
+
 ## [0.3.1](https://github.com/maikbasel/repograph/compare/repograph-core-v0.3.0...repograph-core-v0.3.1) - 2026-06-13
 
 ### Fixed
