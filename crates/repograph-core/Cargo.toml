@@ -42,7 +42,7 @@ globset = "0.4"
 # Embedded index store. `bundled` compiles SQLite in (no system dep) with FTS5
 # enabled, giving BM25 lexical search; vectors are stored as Float32 BLOBs in a
 # plain table and cosine is computed in Rust.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 # Local semantic embeddings — OPTIONAL, behind the `semantic` feature. Pulls the
 # ONNX runtime (downloaded at build time) and a model (downloaded once at
 # runtime), so it is never compiled unless `--features semantic` is set. The
