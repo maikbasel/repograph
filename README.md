@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/maikbasel/repograph/actions/workflows/ci.yml/badge.svg)](https://github.com/maikbasel/repograph/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/repograph.svg)](https://crates.io/crates/repograph)
+[![crates.io downloads](https://img.shields.io/crates/d/repograph.svg?label=crates.io%20downloads)](https://crates.io/crates/repograph)
+[![GitHub downloads](https://img.shields.io/github/downloads/maikbasel/repograph/total.svg?label=github%20downloads)](https://github.com/maikbasel/repograph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A CLI tool for registering, grouping, and exposing local git repositories as structured context for AI agents and humans.
