@@ -775,7 +775,11 @@ pub fn render_update_outcome<W: Write>(
 }
 
 /// Render the passive update notice to `writer` (always stderr in practice).
-/// A single line naming the available and running versions and how to upgrade.
+///
+/// Follows the `update-notifier` convention (npm, yarn, gh): a blank-line-padded
+/// box on stderr so it stands out from the command's own output rather than
+/// blending into the last line. `colored` toggles the bold-yellow border ANSI —
+/// callers pass `true` only when the destination is a terminal.
 ///
 /// # Errors
 ///
@@ -784,11 +788,28 @@ pub fn render_update_notice<W: Write>(
     writer: &mut W,
     current: &str,
     latest: &str,
+    colored: bool,
 ) -> io::Result<()> {
-    writeln!(
-        writer,
-        "repograph {latest} available (you have {current}) — run `repograph update` or upgrade via your package manager."
-    )
+    // Content lines; box width is sized to the widest of them.
+    let lines = [
+        "Update available".to_string(),
+        format!("{current} → {latest}"),
+        "Run `repograph update` to upgrade.".to_string(),
+    ];
+    let inner = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+
+    // Bold yellow border when writing to a terminal; plain box-drawing otherwise.
+    let (on, off) = if colored { ("\x1b[1;33m", "\x1b[0m") } else { ("", "") };
+    let bar = "─".repeat(inner + 2);
+
+    writeln!(writer)?;
+    writeln!(writer, "{on}╭{bar}╮{off}")?;
+    for line in &lines {
+        let pad = inner - line.chars().count();
+        writeln!(writer, "{on}│{off} {line}{:pad$} {on}│{off}", "")?;
+    }
+    writeln!(writer, "{on}╰{bar}╯{off}")?;
+    writeln!(writer)
 }
 
 fn serde_json_to_repograph(e: serde_json::Error) -> RepographError {
@@ -857,7 +878,7 @@ mod tests {
     #[test]
     fn update_notice_names_versions_and_command() {
         let mut buf = Vec::new();
-        render_update_notice(&mut buf, "0.2.1", "0.3.0").unwrap();
+        render_update_notice(&mut buf, "0.2.1", "0.3.0", false).unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("0.3.0"), "names the available version: {s}");
         assert!(s.contains("0.2.1"), "names the running version: {s}");
@@ -865,7 +886,8 @@ mod tests {
             s.contains("repograph update"),
             "points at the update command: {s}"
         );
-        assert!(s.ends_with('\n'), "is a single terminated line: {s:?}");
+        assert!(!s.contains('\x1b'), "no ANSI when uncolored: {s:?}");
+        assert!(s.contains('╭') && s.contains('╯'), "boxed for prominence: {s}");
     }
 
     fn fixture() -> BTreeMap<String, Repo> {

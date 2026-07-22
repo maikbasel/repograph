@@ -8,7 +8,7 @@ mod selfupdate;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use is_terminal::IsTerminal;
 use repograph_core::{Config, RepographError};
 use tracing_subscriber::EnvFilter;
@@ -27,7 +27,7 @@ pub(crate) struct Cli {
     data_dir: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -77,18 +77,26 @@ fn main() -> ExitCode {
     init_tracing();
     let cli = Cli::parse();
 
+    // No subcommand: print help and still surface the update nudge, matching the
+    // npm / gh / cargo convention. Treated as success (exit 0), not a usage error.
+    let Some(command) = cli.command else {
+        let _ = Cli::command().print_help();
+        selfupdate::notify(false);
+        return ExitCode::SUCCESS;
+    };
+
     let config_dir = match resolve_config_dir(cli.config_dir, Config::default_dir()) {
         Ok(p) => p,
         Err(e) => return report(&e),
     };
 
-    let command_is_update = matches!(cli.command, Command::Update(_));
+    let command_is_update = matches!(command, Command::Update(_));
 
     // The data dir is only needed by index/find/doctor; resolve lazily so a
     // platform with no data dir still runs every other command.
     let data_dir = || resolve_data_dir(cli.data_dir.clone(), default_data_dir());
 
-    let result = match cli.command {
+    let result = match command {
         Command::Add(args) => commands::add::run(args, &config_dir),
         Command::Completions(args) => commands::completions::run(&args),
         Command::Context(args) => commands::context::run(&args, &config_dir),

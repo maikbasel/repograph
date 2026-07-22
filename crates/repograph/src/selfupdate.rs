@@ -329,8 +329,9 @@ pub fn notify(command_is_update: bool) {
     };
     if is_newer(current, &latest) {
         // Best-effort stderr write; a failure here is not worth surfacing.
+        let colored = std::io::stderr().is_terminal();
         let mut stderr = std::io::stderr().lock();
-        let _ = crate::output::render_update_notice(&mut stderr, current, &latest);
+        let _ = crate::output::render_update_notice(&mut stderr, current, &latest, colored);
     }
 }
 
