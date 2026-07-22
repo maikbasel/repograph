@@ -5,10 +5,10 @@
 //! before, in a repo I can't name." Stdout carries the ranked hits (JSON
 //! envelope when piped / `--json`, a table on TTY); diagnostics go to stderr.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use repograph_core::{Config, RepographError, search};
+use repograph_core::{Config, RepographError, refresh_stale, search};
 
 use crate::output::{OutputMode, render_hits};
 
@@ -40,6 +40,14 @@ pub struct Args {
     /// Force JSON output regardless of TTY detection.
     #[arg(long)]
     pub json: bool,
+
+    /// Skip the automatic pre-search index refresh and query the existing index
+    /// as-is. Without this, `find` reindexes any in-scope repo whose working tree
+    /// changed since it was last indexed (including uncommitted edits) before
+    /// searching. With it, a missing index is an error (exit 3) rather than being
+    /// built on demand.
+    #[arg(long)]
+    pub no_refresh: bool,
 }
 
 /// Resolve scope, run the hybrid search, and render the ranked hits.
@@ -60,12 +68,40 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
     let config = Config::load(config_dir)?;
     let mode = OutputMode::detect(args.json);
 
-    let repos_filter = match &args.workspace {
-        Some(ws) => {
-            let (live, _dangling) = config.resolve_workspace(ws)?;
-            live.into_iter().map(|(name, _)| name.clone()).collect()
+    // The repos this query will reach, as (name, path). For a workspace scope
+    // that is its live members; otherwise every registered repo.
+    let scope = resolve_scope(&config, args.workspace.as_deref())?;
+
+    // Auto-refresh (unless opted out): bring any in-scope repo whose working tree
+    // changed — including uncommitted edits — up to date before querying, so
+    // results reflect what is on disk now. Diagnostics on stderr only.
+    if !args.no_refresh {
+        let mut progress = |_done: usize, _total: usize, name: &str| {
+            tracing::debug!(repo = %name, "find: refreshing stale repo");
+        };
+        let refreshed = refresh_stale(data_dir, &scope, args.semantic, &mut progress)?;
+        if refreshed.refreshed.is_empty() {
+            tracing::debug!("find: index already fresh");
+        } else {
+            tracing::info!(
+                repos = refreshed.refreshed.len(),
+                files = refreshed.files_indexed,
+                "find: auto-refreshed before search",
+            );
+            eprintln!(
+                "Refreshed {} repo(s) before search: {}.",
+                refreshed.refreshed.len(),
+                refreshed.refreshed.join(", ")
+            );
         }
-        None => Vec::new(),
+    }
+
+    // A workspace scope filters results to its member names; the default scope
+    // (all repos) passes an empty filter, which `search` reads as "no filter".
+    let repos_filter: Vec<String> = if args.workspace.is_some() {
+        scope.iter().map(|(name, _)| name.clone()).collect()
+    } else {
+        Vec::new()
     };
 
     let outcome = search(
@@ -95,4 +131,25 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
         "find: rendered",
     );
     Ok(())
+}
+
+/// Resolve the repos a query will reach as `(name, absolute_path)` pairs. With a
+/// workspace, dangling members are skipped (parity with `index`'s scope
+/// resolution). Used to bound the auto-refresh to exactly what `search` queries.
+fn resolve_scope(
+    config: &Config,
+    workspace: Option<&str>,
+) -> Result<Vec<(String, PathBuf)>, RepographError> {
+    if let Some(ws) = workspace {
+        let (live, _dangling) = config.resolve_workspace(ws)?;
+        return Ok(live
+            .into_iter()
+            .map(|(name, repo)| (name.clone(), repo.path.clone()))
+            .collect());
+    }
+    Ok(config
+        .repos()
+        .iter()
+        .map(|(name, repo)| (name.clone(), repo.path.clone()))
+        .collect())
 }

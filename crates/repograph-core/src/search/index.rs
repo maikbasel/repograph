@@ -18,7 +18,7 @@ use crate::search::chunk::{Chunk, TrackedFile, chunk_file};
 /// Bumped whenever the on-disk schema changes shape. A mismatch triggers a
 /// clean rebuild rather than a fragile migration — the index is a derived
 /// artifact, cheap to recreate.
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "2";
 
 /// Reciprocal-rank-fusion constant. 60 is the value from the original RRF paper
 /// and the de-facto default; it damps the contribution of low-ranked hits.
@@ -149,7 +149,8 @@ impl Store {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS repos (
                  repo TEXT PRIMARY KEY,
-                 indexed_commit TEXT
+                 indexed_commit TEXT,
+                 indexed_mtime INTEGER
              );
              CREATE TABLE IF NOT EXISTS files (
                  repo TEXT NOT NULL,
@@ -247,6 +248,27 @@ impl Store {
         Ok(out)
     }
 
+    /// The per-repo working-tree modification-time baseline (unix seconds)
+    /// recorded at the last build, consumed by the auto-refresh staleness gate.
+    /// A repo absent from the map, or present with `None`, has no baseline and
+    /// SHALL be treated as stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepographError::Index`] on `SQLite` failure.
+    pub fn indexed_mtimes(&self) -> Result<HashMap<String, Option<i64>>, RepographError> {
+        let mut stmt = self.conn.prepare("SELECT repo, indexed_mtime FROM repos")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (repo, mtime) = row?;
+            out.insert(repo, mtime);
+        }
+        Ok(out)
+    }
+
     /// Reconcile one repo's tracked files against the index in a single
     /// transaction: re-chunk new/changed files, purge files no longer tracked,
     /// and record the indexed commit. When `embedder` is supplied, changed
@@ -261,6 +283,7 @@ impl Store {
         repo: &str,
         files: &[TrackedFile],
         head_commit: Option<&str>,
+        newest_mtime: Option<i64>,
         mut embedder: Option<&mut dyn Embedder>,
     ) -> Result<RepoStats, RepographError> {
         let mut stats = RepoStats::default();
@@ -319,9 +342,11 @@ impl Store {
         }
 
         tx.execute(
-            "INSERT INTO repos(repo, indexed_commit) VALUES(?1, ?2)
-             ON CONFLICT(repo) DO UPDATE SET indexed_commit = excluded.indexed_commit",
-            params![repo, head_commit],
+            "INSERT INTO repos(repo, indexed_commit, indexed_mtime) VALUES(?1, ?2, ?3)
+             ON CONFLICT(repo) DO UPDATE SET
+                 indexed_commit = excluded.indexed_commit,
+                 indexed_mtime = excluded.indexed_mtime",
+            params![repo, head_commit, newest_mtime],
         )?;
         tx.commit()?;
         Ok(stats)
@@ -672,6 +697,7 @@ mod tests {
             path: path.to_string(),
             content_hash: format!("h:{}:{}", path, text.len()),
             text: text.to_string(),
+            mtime_unix: 0,
         }
     }
 
@@ -698,7 +724,7 @@ mod tests {
             tf("util.rs", "fn unrelated_helper() {}\n"),
         ];
         let stats = store
-            .reconcile_repo("api", &files, Some("deadbeef"), None)
+            .reconcile_repo("api", &files, Some("deadbeef"), None, None)
             .unwrap();
         assert_eq!(stats.files_indexed, 2);
         let ids = store
@@ -717,14 +743,14 @@ mod tests {
             tf("a.rs", "fn first() {}\n"),
             tf("b.rs", "fn second() {}\n"),
         ];
-        store.reconcile_repo("r", &files, None, None).unwrap();
+        store.reconcile_repo("r", &files, None, None, None).unwrap();
 
         // Second run: a.rs unchanged, b.rs changed.
         let files2 = vec![
             tf("a.rs", "fn first() {}\n"),
             tf("b.rs", "fn second_renamed() {}\n"),
         ];
-        let stats = store.reconcile_repo("r", &files2, None, None).unwrap();
+        let stats = store.reconcile_repo("r", &files2, None, None, None).unwrap();
         assert_eq!(stats.files_unchanged, 1, "a.rs hash matched");
         assert_eq!(stats.files_indexed, 1, "b.rs re-chunked");
 
@@ -751,7 +777,7 @@ mod tests {
         let files = vec![tf("a.rs", "fn a() {}\n"), tf("b.rs", "fn b() {}\n")];
 
         // First pass is lexical-only: no embedder, no vectors written.
-        store.reconcile_repo("r", &files, None, None).unwrap();
+        store.reconcile_repo("r", &files, None, None, None).unwrap();
         assert!(
             !store.has_vectors().unwrap(),
             "lexical build wrote no vectors"
@@ -762,7 +788,7 @@ mod tests {
         let mut emb = StubEmbedder;
         store.ensure_model(emb.model_id()).unwrap();
         let stats = store
-            .reconcile_repo("r", &files, None, Some(&mut emb))
+            .reconcile_repo("r", &files, None, None, Some(&mut emb))
             .unwrap();
         assert_eq!(
             stats.files_indexed, 2,
@@ -778,7 +804,7 @@ mod tests {
         // skips them — no needless re-embedding once the index is whole.
         let mut emb2 = StubEmbedder;
         let stats2 = store
-            .reconcile_repo("r", &files, None, Some(&mut emb2))
+            .reconcile_repo("r", &files, None, None, Some(&mut emb2))
             .unwrap();
         assert_eq!(
             stats2.files_unchanged, 2,
@@ -791,11 +817,11 @@ mod tests {
     fn purges_deleted_files() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("r", &[tf("gone.rs", "fn doomed() {}\n")], None, None)
+            .reconcile_repo("r", &[tf("gone.rs", "fn doomed() {}\n")], None, None, None)
             .unwrap();
         assert!(!store.search_lexical("doomed", &[], 10).unwrap().is_empty());
         // gone.rs no longer tracked.
-        let stats = store.reconcile_repo("r", &[], None, None).unwrap();
+        let stats = store.reconcile_repo("r", &[], None, None, None).unwrap();
         assert_eq!(stats.files_purged, 1);
         assert!(store.search_lexical("doomed", &[], 10).unwrap().is_empty());
     }
@@ -804,10 +830,10 @@ mod tests {
     fn repo_filter_scopes_results() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("api", &[tf("a.rs", "fn shared_thing() {}\n")], None, None)
+            .reconcile_repo("api", &[tf("a.rs", "fn shared_thing() {}\n")], None, None, None)
             .unwrap();
         store
-            .reconcile_repo("ui", &[tf("b.rs", "fn shared_thing() {}\n")], None, None)
+            .reconcile_repo("ui", &[tf("b.rs", "fn shared_thing() {}\n")], None, None, None)
             .unwrap();
         let all = store.search_lexical("shared_thing", &[], 10).unwrap();
         assert_eq!(all.len(), 2);
@@ -822,10 +848,22 @@ mod tests {
     fn indexed_commits_recorded() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("r", &[tf("a.rs", "fn a() {}\n")], Some("c0ffee"), None)
+            .reconcile_repo("r", &[tf("a.rs", "fn a() {}\n")], Some("c0ffee"), None, None)
             .unwrap();
         let commits = store.indexed_commits().unwrap();
         assert_eq!(commits.get("r"), Some(&Some("c0ffee".to_string())));
+    }
+
+    #[test]
+    fn indexed_mtime_baseline_recorded() {
+        let (_tmp, mut store) = build_store();
+        store
+            .reconcile_repo("r", &[tf("a.rs", "fn a() {}\n")], None, Some(1_700_000_000), None)
+            .unwrap();
+        let mtimes = store.indexed_mtimes().unwrap();
+        assert_eq!(mtimes.get("r"), Some(&Some(1_700_000_000)));
+        // A repo never reconciled has no baseline at all.
+        assert_eq!(mtimes.get("unknown"), None);
     }
 
     #[test]
@@ -865,7 +903,7 @@ mod tests {
         {
             let mut store = Store::open_for_build(&db).unwrap();
             store
-                .reconcile_repo("r", &[tf("a.rs", "fn keep() {}\n")], None, None)
+                .reconcile_repo("r", &[tf("a.rs", "fn keep() {}\n")], None, None, None)
                 .unwrap();
             store.meta_set("schema_version", "0").unwrap();
         }

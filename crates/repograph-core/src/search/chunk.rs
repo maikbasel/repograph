@@ -50,13 +50,27 @@ impl Chunk {
 }
 
 /// A git-tracked file resolved to its current working-tree bytes, ready to
-/// chunk. `content_hash` is the git blob SHA of `text`, used to detect changes
-/// for incremental reindexing.
+/// chunk.
+///
+/// `content_hash` is the git blob SHA of `text`, used to detect changes for
+/// incremental reindexing. `mtime_unix` is the working-tree modification time
+/// (unix seconds), aggregated into the per-repo staleness baseline.
 #[derive(Debug, Clone)]
 pub struct TrackedFile {
     pub path: String,
     pub content_hash: String,
     pub text: String,
+    pub mtime_unix: i64,
+}
+
+/// Working-tree modification time of `meta` as unix seconds. Falls back to `0`
+/// when the platform/filesystem cannot report it — a stable floor that simply
+/// makes the file never look "newer than baseline" on its own.
+fn mtime_unix(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Enumerate the git-tracked files of `repo_path` eligible for indexing.
@@ -101,9 +115,44 @@ pub fn tracked_files(repo: &Repository, repo_path: &Path) -> Result<Vec<TrackedF
             path: rel,
             content_hash,
             text,
+            mtime_unix: mtime_unix(&meta),
         });
     }
     Ok(out)
+}
+
+/// Newest working-tree modification time (unix seconds) across `repo`'s
+/// git-tracked files, or `None` when nothing eligible is tracked.
+///
+/// This is the cheap staleness probe for auto-refresh: it `stat`s each tracked
+/// entry but **never reads or hashes** file contents, mirroring
+/// [`tracked_files`]'s tracked/size eligibility so it agrees with what would
+/// actually be indexed.
+///
+/// # Errors
+///
+/// Returns the underlying [`git2::Error`] when the index cannot be read.
+pub fn tracked_mtimes(repo: &Repository, repo_path: &Path) -> Result<Option<i64>, git2::Error> {
+    let index = repo.index()?;
+    let mut newest: Option<i64> = None;
+    for i in 0..index.len() {
+        let Some(entry) = index.get(i) else {
+            continue;
+        };
+        let Ok(rel) = std::str::from_utf8(&entry.path) else {
+            continue;
+        };
+        let abs = repo_path.join(rel.replace('\\', "/"));
+        let Ok(meta) = std::fs::metadata(&abs) else {
+            continue; // staged-deleted or unreadable: nothing to index.
+        };
+        if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        let m = mtime_unix(&meta);
+        newest = Some(newest.map_or(m, |n| n.max(m)));
+    }
+    Ok(newest)
 }
 
 /// Git blob SHA of `bytes` — the same identity git uses for file content. Reused
@@ -191,6 +240,39 @@ mod tests {
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, vec!["README.md", "src/a.rs"]);
         assert!(files.iter().all(|f| !f.content_hash.is_empty()));
+    }
+
+    #[test]
+    fn tracked_mtimes_reports_newest_and_ignores_untracked() {
+        let (_tmp, dir) = init_repo_with(&[("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")]);
+        let repo = git2::Repository::open(&dir).unwrap();
+        let baseline = tracked_mtimes(&repo, &dir).unwrap().unwrap();
+
+        // Stamp one tracked file into the future → newest mtime moves up.
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join("b.rs"))
+            .unwrap()
+            .set_modified(future)
+            .unwrap();
+        let bumped = tracked_mtimes(&repo, &dir).unwrap().unwrap();
+        assert!(bumped > baseline, "newest tracked mtime tracks the edit");
+
+        // An untracked file, however new, does not affect the result.
+        let untracked = dir.join("scratch.tmp");
+        std::fs::write(&untracked, "x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&untracked)
+            .unwrap()
+            .set_modified(future + std::time::Duration::from_secs(120))
+            .unwrap();
+        assert_eq!(
+            tracked_mtimes(&repo, &dir).unwrap().unwrap(),
+            bumped,
+            "untracked files are excluded from the staleness probe"
+        );
     }
 
     #[test]

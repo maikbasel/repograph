@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use is_terminal::IsTerminal;
-use repograph_core::{Config, RepographError, build_index};
+use repograph_core::{Config, RepographError, build_index_reporting};
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -48,8 +48,13 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
     }
 
     let spinner = start_spinner(repos.len());
-    let outcome = build_index(data_dir, &repos, args.semantic)?;
-    if let Some(pb) = spinner {
+    let mut progress = |done: usize, total: usize, name: &str| {
+        if let Some(pb) = &spinner {
+            pb.set_message(format!("Indexing {name} ({done}/{total})…"));
+        }
+    };
+    let outcome = build_index_reporting(data_dir, &repos, args.semantic, &mut progress)?;
+    if let Some(pb) = &spinner {
         pb.finish_and_clear();
     }
 

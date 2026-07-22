@@ -25,10 +25,14 @@ fn register(config_dir: &Path, repo: &Path, name: &str) {
         .success();
 }
 
+/// Query the index built by the `index` command. Uses `--no-refresh` so these
+/// tests observe exactly what `index` persisted, without `find`'s auto-refresh
+/// re-indexing repos the test deliberately left out of scope.
 fn find_json(config_dir: &Path, query: &str) -> serde_json::Value {
     let out = repograph_cmd(config_dir)
         .arg("find")
         .arg(query)
+        .arg("--no-refresh")
         .arg("--json")
         .assert()
         .success();

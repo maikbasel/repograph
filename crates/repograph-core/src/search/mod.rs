@@ -124,6 +124,26 @@ pub fn build_index(
     repos: &[(String, PathBuf)],
     semantic: bool,
 ) -> Result<IndexOutcome, RepographError> {
+    build_index_reporting(data_dir, repos, semantic, &mut |_, _, _| {})
+}
+
+/// [`build_index`] with a per-repo progress hook.
+///
+/// `progress(done, total, name)` is invoked as each repo is reached (1-based
+/// `done`), so the command layer can advance a spinner without leaking
+/// `indicatif` into core. `build_index` is the no-op-progress convenience
+/// wrapper.
+///
+/// # Errors
+///
+/// Returns [`RepographError::Index`] on a store failure, or
+/// [`RepographError::Io`] if the data directory cannot be created.
+pub fn build_index_reporting(
+    data_dir: &Path,
+    repos: &[(String, PathBuf)],
+    semantic: bool,
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<IndexOutcome, RepographError> {
     let mut store = Store::open_for_build(&index_db_path(data_dir))?;
     let (mut embedder, degraded) = make_embedder(semantic, &model_cache_dir(data_dir));
     if let Some(e) = embedder.as_ref() {
@@ -136,7 +156,9 @@ pub fn build_index(
         ..IndexOutcome::default()
     };
 
-    for (name, path) in repos {
+    let total = repos.len();
+    for (i, (name, path)) in repos.iter().enumerate() {
+        progress(i + 1, total, name);
         let repo = match git2::Repository::open(path) {
             Ok(r) => r,
             Err(e) => {
@@ -159,12 +181,13 @@ pub fn build_index(
             }
         };
         let head = head_commit(&repo);
+        let newest_mtime = files.iter().map(|f| f.mtime_unix).max();
         #[allow(clippy::option_if_let_else)]
         let emb: Option<&mut dyn Embedder> = match &mut embedder {
             Some(e) => Some(e.as_mut()),
             None => None,
         };
-        let stats = store.reconcile_repo(name, &files, head.as_deref(), emb)?;
+        let stats = store.reconcile_repo(name, &files, head.as_deref(), newest_mtime, emb)?;
         outcome.repos_indexed += 1;
         outcome.files_indexed += stats.files_indexed;
         outcome.files_unchanged += stats.files_unchanged;
@@ -172,6 +195,82 @@ pub fn build_index(
     }
     outcome.changed = outcome.files_indexed > 0 || outcome.files_purged > 0;
     Ok(outcome)
+}
+
+/// Outcome of [`refresh_stale`]: which repos were reindexed and why.
+#[derive(Debug, Clone, Default)]
+pub struct RefreshOutcome {
+    /// Names of the repos that were stale and got reindexed this call.
+    pub refreshed: Vec<String>,
+    /// Total files (re)indexed across the refreshed repos.
+    pub files_indexed: usize,
+    /// True when no index existed and this call built it from scratch.
+    pub built_from_scratch: bool,
+}
+
+/// Bring the index up to date for `repos` before a query, cheaply.
+///
+/// For each repo the newest working-tree mtime (a `stat`-only sweep via
+/// [`chunk::tracked_mtimes`], no reads) is compared against the baseline
+/// recorded at its last index; a repo is refreshed only when its working tree is
+/// newer, when it has no baseline, or when no index exists yet. Refreshing reuses
+/// the incremental [`build_index_reporting`] path, so only changed files are
+/// reprocessed. This detects **uncommitted** edits, not just commits.
+///
+/// A missing, unreadable, or wrong-schema index yields no baselines, so every
+/// in-scope repo is treated as stale and (re)built — the schema bump path.
+///
+/// # Errors
+///
+/// Returns [`RepographError::Index`] on a store failure, or
+/// [`RepographError::Io`] if the data directory cannot be created during a build.
+pub fn refresh_stale(
+    data_dir: &Path,
+    repos: &[(String, PathBuf)],
+    semantic: bool,
+    progress: &mut dyn FnMut(usize, usize, &str),
+) -> Result<RefreshOutcome, RepographError> {
+    let db = index_db_path(data_dir);
+    let index_present = db.is_file();
+    // No baselines when the index is absent, corrupt, or an older schema — every
+    // repo then reads as stale and build_index_reporting rebuilds cleanly.
+    let baselines = if index_present {
+        Store::open_existing(&db)
+            .and_then(|s| s.indexed_mtimes())
+            .unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let stale: Vec<(String, PathBuf)> = repos
+        .iter()
+        .filter(|(name, path)| {
+            let baseline = baselines.get(name).copied().flatten();
+            let current = git2::Repository::open(path)
+                .ok()
+                .and_then(|r| chunk::tracked_mtimes(&r, path).ok().flatten());
+            match (baseline, current) {
+                // Working tree newer than the recorded baseline → refresh.
+                (Some(b), Some(c)) => c > b,
+                // Never indexed (or pre-baseline schema) → refresh once.
+                (None, _) => true,
+                // Baseline exists but nothing statable now → nothing to refresh.
+                (Some(_), None) => false,
+            }
+        })
+        .cloned()
+        .collect();
+
+    if stale.is_empty() {
+        return Ok(RefreshOutcome::default());
+    }
+
+    let outcome = build_index_reporting(data_dir, &stale, semantic, progress)?;
+    Ok(RefreshOutcome {
+        refreshed: stale.into_iter().map(|(name, _)| name).collect(),
+        files_indexed: outcome.files_indexed,
+        built_from_scratch: !index_present,
+    })
 }
 
 /// Search the index, returning ranked hits across all repos or one workspace.
@@ -380,6 +479,58 @@ mod tests {
         assert_eq!(result.hits[0].repo, "api");
         assert_eq!(result.hits[0].path, "auth.rs");
         assert!(!result.semantic_used);
+    }
+
+    #[test]
+    fn refresh_stale_builds_missing_index_then_finds() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let api = init_repo(tmp.path(), "api", &[("a.rs", "fn alpha_marker() {}\n")]);
+        let repos = vec![("api".to_string(), api)];
+
+        // No index yet → refresh builds it from scratch.
+        let mut noop = |_: usize, _: usize, _: &str| {};
+        let out = refresh_stale(&data, &repos, false, &mut noop).unwrap();
+        assert!(out.built_from_scratch);
+        assert_eq!(out.refreshed, vec!["api".to_string()]);
+        let hits = search(&data, "alpha_marker", &[], 5, false).unwrap();
+        assert!(!hits.hits.is_empty());
+    }
+
+    #[test]
+    fn refresh_stale_picks_up_uncommitted_edit_and_skips_when_fresh() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        // Disjoint single tokens so a match for one cannot alias the other.
+        let dir = init_repo(tmp.path(), "api", &[("a.rs", "fn frobnicate() {}\n")]);
+        let repos = vec![("api".to_string(), dir.clone())];
+        let mut noop = |_: usize, _: usize, _: &str| {};
+
+        refresh_stale(&data, &repos, false, &mut noop).unwrap();
+        // Second call with no change → nothing stale, nothing reindexed.
+        let fresh = refresh_stale(&data, &repos, false, &mut noop).unwrap();
+        assert!(fresh.refreshed.is_empty(), "unchanged repo must not refresh");
+
+        // Edit a tracked file WITHOUT committing, and stamp its mtime strictly
+        // past the baseline (mtime is ~1s-granular, so a same-second write could
+        // otherwise tie the baseline and look fresh).
+        let file = dir.join("a.rs");
+        std::fs::write(&file, "fn plughxyzzy() {}\n").unwrap();
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(future)
+            .unwrap();
+
+        let after = refresh_stale(&data, &repos, false, &mut noop).unwrap();
+        assert_eq!(after.refreshed, vec!["api".to_string()]);
+        // The uncommitted edit is now searchable; the old symbol is gone.
+        let hits = search(&data, "plughxyzzy", &[], 5, false).unwrap();
+        assert!(!hits.hits.is_empty(), "uncommitted edit must be indexed");
+        let stale_hits = search(&data, "frobnicate", &[], 5, false).unwrap();
+        assert!(stale_hits.hits.is_empty(), "old content must be purged");
     }
 
     #[test]

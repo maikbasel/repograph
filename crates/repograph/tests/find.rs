@@ -232,19 +232,90 @@ fn find_workspace_filter_scopes_results() {
 }
 
 #[test]
-fn find_without_index_exits_3_and_guides_user() {
+fn find_without_index_auto_builds_and_returns_hits() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn zzztopmarker() {}\n")]);
+    register(&config_dir, &api, "api");
+    // Note: no `repograph index` run — auto-refresh must build it on demand.
+    let out = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("zzztopmarker")
+        .arg("--json")
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        !v["hits"].as_array().unwrap().is_empty(),
+        "missing index is built on demand and returns hits"
+    );
+}
+
+#[test]
+fn find_no_refresh_without_index_exits_3_and_guides_user() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
     let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "fn a() {}\n")]);
     register(&config_dir, &api, "api");
-    // Note: no `repograph index` run.
+    // No index, and --no-refresh forbids building one → the old exit-3 contract.
     repograph_cmd(&config_dir)
         .arg("find")
         .arg("anything")
+        .arg("--no-refresh")
         .assert()
         .failure()
         .code(3)
         .stderr(predicate::str::contains("repograph index"));
+}
+
+#[test]
+fn find_auto_refreshes_uncommitted_edit() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let api =
+        fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn oldmarker_frob() {}\n")]);
+    register(&config_dir, &api, "api");
+    build_index(&config_dir);
+
+    // Edit a tracked file WITHOUT committing; stamp its mtime strictly forward so
+    // the ~1s-granular baseline can't tie it.
+    let file = api.join("a.rs");
+    std::fs::write(&file, "pub fn newmarker_plugh() {}\n").unwrap();
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(future)
+        .unwrap();
+
+    // --no-refresh first: it queries the pre-edit index, which never saw the new
+    // symbol. (Must run before any refreshing find, which would persist the edit.)
+    let out2 = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("newmarker_plugh")
+        .arg("--no-refresh")
+        .arg("--json")
+        .assert()
+        .success();
+    let v2: serde_json::Value = serde_json::from_slice(&out2.get_output().stdout).unwrap();
+    assert!(
+        v2["hits"].as_array().unwrap().is_empty(),
+        "--no-refresh ignores the uncommitted edit"
+    );
+
+    // Default find auto-refreshes → the uncommitted edit is now searchable.
+    let out = repograph_cmd(&config_dir)
+        .arg("find")
+        .arg("newmarker_plugh")
+        .arg("--json")
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(
+        !v["hits"].as_array().unwrap().is_empty(),
+        "uncommitted edit is picked up by auto-refresh"
+    );
 }
 
 #[test]
