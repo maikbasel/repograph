@@ -495,7 +495,7 @@ mod tests {
         let s = inspect("r", &dir, false);
         assert_eq!(s.state, RepoState::Detached);
         assert!(s.branch.is_none());
-        assert!(s.detached_sha.as_deref().map_or(0, str::len) == 7);
+        assert_eq!(s.detached_sha.as_deref().map_or(0, str::len), 7);
     }
 
     #[test]
