@@ -1,4 +1,4 @@
-# repograph
+# Repograph
 
 [![CI](https://github.com/maikbasel/repograph/actions/workflows/ci.yml/badge.svg)](https://github.com/maikbasel/repograph/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/repograph.svg)](https://crates.io/crates/repograph)
