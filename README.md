@@ -210,7 +210,7 @@ Overwrite existing artifacts even outside the managed delimiter block. Without t
 
 | Agent ID      | User-scope path (`repograph` / `repograph-setup`)                                       | Project-scope path                     |
 |---------------|-------------------------------------------------------|----------------------------------------|
-| `claude-code` | `~/.claude/skills/repograph/SKILL.md` · `~/.claude/skills/repograph-setup/SKILL.md`  | `<cwd>/.claude/skills/{repograph,repograph-setup}/SKILL.md` |
+| `claude-code` | `~/.claude/skills/repograph/SKILL.md` · `~/.claude/skills/repograph-setup/SKILL.md` · pointer in `~/.claude/CLAUDE.md`  | `<cwd>/.claude/skills/{repograph,repograph-setup}/SKILL.md` · pointer in `<cwd>/CLAUDE.md` |
 | `agents-md`   | (project-only)                                        | `<cwd>/AGENTS.md` (both skills inlined) |
 | `cursor`      | (project-only)                                        | `<cwd>/.cursor/rules/repograph.mdc` · `repograph-setup.mdc` |
 | `aider`       | (project-only)                                        | `<cwd>/CONVENTIONS.md` (both skills inlined) |
@@ -219,7 +219,9 @@ Overwrite existing artifacts even outside the managed delimiter block. Without t
 
 Agents that own a whole file (Claude, Cursor) get a discrete file per skill; flat-file agents (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) inline both skills into their single managed block.
 
-Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a version-stamped delimiter pair (`<!-- repograph:begin v1 --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs (an older version stamp is rewritten in place). Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one artifact does not abort the others; the agent-selection persistence already succeeded. `repograph doctor` reports any missing or stale (older-version) skill artifact as a `warn` pointing at `repograph init` — it never rewrites them itself.
+For `claude-code`, a short **always-loaded pointer** is additionally spliced into `CLAUDE.md` (project scope) or `~/.claude/CLAUDE.md` (user scope). A `SKILL.md` is loaded lazily — Claude Code only sees its `description` until it decides to invoke it — so without an always-loaded nudge the skill is rarely reached for unprompted. The pointer is a terse signpost (trigger phrasings, skill names, prefer-over-`find`/`git`), not a copy of the skill body; it uses the same managed-delimiter splice, so existing `CLAUDE.md` content is byte-preserved.
+
+Files that may already contain user-authored prose (`AGENTS.md`, `CONVENTIONS.md`, `.windsurfrules`) are managed by a version-stamped delimiter pair (`<!-- repograph:begin v1 --> … <!-- repograph:end -->`); only the delimited region is repograph-managed and only it is rewritten on re-runs (an older version stamp is rewritten in place). Content above and below the delimiters is byte-preserved. Pass `--force` to replace the whole file with the bare delimited block. Per-agent install outcomes (Written / Unchanged / Skipped / Failed) are logged to stderr. A failure for one artifact does not abort the others; the agent-selection persistence already succeeded. `repograph doctor` reports any missing or stale (older-version) skill artifact — and, for `claude-code`, the always-loaded `CLAUDE.md` pointer — as a `warn` pointing at `repograph init`, never rewriting them itself.
 
 Selecting `copilot` is valid but writes no file in v1; the agent's instruction format varies across surfaces (repo-level, editor-level, Copilot Workspace) and no single converged path covers them yet.
 

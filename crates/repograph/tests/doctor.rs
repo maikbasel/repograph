@@ -120,8 +120,9 @@ fn clean_config_emits_all_ok_and_exit_0() {
     assert!(v["summary"]["ok"].as_u64().unwrap() > 0);
     // The search-index check is present and healthy.
     assert_eq!(find_findings(&v, "SearchIndex", "ok").len(), 1);
-    // Both skill artifacts (consumer + setup) are present and current.
-    assert_eq!(find_findings(&v, "SkillArtifactFresh", "ok").len(), 2);
+    // Both skill artifacts (consumer + setup) plus the always-loaded CLAUDE.md
+    // pointer are present and current.
+    assert_eq!(find_findings(&v, "SkillArtifactFresh", "ok").len(), 3);
 }
 
 #[test]

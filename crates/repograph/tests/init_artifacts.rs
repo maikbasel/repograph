@@ -139,6 +139,56 @@ fn claude_code_writes_both_consumer_and_setup_skills() {
 }
 
 #[test]
+fn claude_code_writes_always_loaded_pointer_into_project_claude_md() {
+    let f = InitFixture::new();
+    // Pre-existing user CLAUDE.md must survive: the pointer is spliced, not
+    // clobbered.
+    let claude_md = f.proj.join("CLAUDE.md");
+    std::fs::write(&claude_md, "# My project\n\nHouse rules.\n").unwrap();
+
+    f.cmd()
+        .args(["init", "--no-prompt", "--agents", "claude-code"])
+        .args(["--scope", "project"])
+        .assert()
+        .success();
+
+    let body = read(&claude_md);
+    assert!(
+        body.starts_with("# My project\n\nHouse rules.\n"),
+        "user prose preserved, got:\n{body}",
+    );
+    assert!(
+        body.contains("<!-- repograph:begin") && body.contains("<!-- repograph:end -->"),
+        "always-loaded pointer block spliced in, got:\n{body}",
+    );
+    // The nudge must name the skills so the host wires discovery to them.
+    assert!(
+        body.contains("repograph") && body.contains("repograph-setup"),
+        "pointer names both skills, got:\n{body}",
+    );
+}
+
+#[test]
+fn claude_code_user_scope_pointer_lands_in_home_claude_md() {
+    let f = InitFixture::new();
+    f.cmd()
+        .args(["init", "--no-prompt", "--agents", "claude-code"])
+        .args(["--scope", "user"])
+        .assert()
+        .success();
+
+    let claude_md = f.home.join(".claude/CLAUDE.md");
+    assert!(claude_md.exists(), "user-scope pointer missing at {claude_md:?}");
+    let body = read(&claude_md);
+    assert!(
+        body.contains("<!-- repograph:begin") && body.contains("repograph-setup"),
+        "user-scope pointer carries the managed nudge, got:\n{body}",
+    );
+    // A never-before-seen CLAUDE.md must not have received the pointer for a
+    // non-Claude agent selection — guarded by the copilot/agents-md tests.
+}
+
+#[test]
 fn agents_md_inlines_both_capabilities_in_one_block() {
     let f = InitFixture::new();
     f.cmd()
@@ -246,6 +296,10 @@ fn copilot_selection_succeeds_with_no_artifact() {
         f.proj.join(".cursor/rules/repograph.mdc"),
         f.proj.join(".windsurfrules"),
         f.home.join(".codeium/windsurf/memories/repograph.md"),
+        // The always-loaded CLAUDE.md pointer is Claude-Code-only; a non-Claude
+        // selection must never create it.
+        f.proj.join("CLAUDE.md"),
+        f.home.join(".claude/CLAUDE.md"),
     ] {
         assert!(
             !p.exists(),

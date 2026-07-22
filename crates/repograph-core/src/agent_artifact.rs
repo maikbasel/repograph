@@ -235,6 +235,18 @@ pub const BODY: &str = include_str!("agent_artifact_body.md");
 /// exactly one place, mirroring [`BODY`] for the consumer skill.
 pub const SETUP_BODY: &str = include_str!("agent_artifact_setup_body.md");
 
+/// Short, **always-loaded** discovery nudge spliced into Claude Code's
+/// `CLAUDE.md`.
+///
+/// The generated `SKILL.md` files are *lazy-loaded*: Claude Code only sees a
+/// skill's `description` up front and loads [`BODY`] after deciding to invoke
+/// it. That decision is exactly what fails to happen unless the user asks by
+/// name. `CLAUDE.md`, by contrast, is read into context every turn — so this
+/// terse pointer (trigger phrasings + skill names + prefer-over-`find`/`git`)
+/// is what actually makes the host reach for the skill reflexively. Kept short
+/// on purpose: it is a signpost to the skills, not a second copy of the body.
+pub const POINTER: &str = "## repograph\n\nThis project is registered with **repograph** — a local registry of the user's own git repositories, exposed to agents as structured JSON.\n\nWhen the user refers to one of their registered projects by name, prefer resolving it through repograph over manual `find` / `git`:\n\n- Read-only questions — \"switch to <name>\", \"open the api repo\", \"cd into <name>\", \"what's dirty across my projects\", \"which repos have uncommitted changes\", \"pull in <repo>'s CLAUDE.md\", or searching code across repos — use the **repograph** skill (or run `repograph list` / `status` / `context` / `switch` / `find` directly).\n- Changing the registry — register, group into a workspace, rename, retag, or remove — use the **repograph-setup** skill.\n\nThis is for which-repo / across-repos questions. For the current directory's own state, use plain `git`.";
+
 /// The instructional body for `capability`.
 #[must_use]
 pub const fn body_for(capability: Capability) -> &'static str {
@@ -342,6 +354,19 @@ pub fn resolve_path(
             // calling `resolve_path`. Returning a path here would mislead.
             unreachable!("resolve_path: copilot has no writer; check has_artifact_writer first")
         }
+    }
+}
+
+/// Resolve the target `CLAUDE.md` for the always-loaded [`POINTER`].
+///
+/// Project scope targets the repo-root `CLAUDE.md`; user scope targets the
+/// global `~/.claude/CLAUDE.md`. Both are files Claude Code loads into context
+/// every turn (unlike the lazy-loaded `SKILL.md`), which is the whole point.
+#[must_use]
+pub fn resolve_pointer_path(scope: Scope, home: &Path, cwd: &Path) -> PathBuf {
+    match scope {
+        Scope::User => home.join(".claude/CLAUDE.md"),
+        Scope::Project => cwd.join("CLAUDE.md"),
     }
 }
 
@@ -629,6 +654,67 @@ pub fn install_one(
     }
 }
 
+/// Splice the always-loaded [`POINTER`] into the resolved `CLAUDE.md`.
+///
+/// Unlike [`install_one`], this **always** splices (reads existing content and
+/// rewrites only the delimited region) and never honors a `force` fresh-write —
+/// `CLAUDE.md` is wholly user-owned prose that repograph only ever augments,
+/// never replaces. Idempotent: a matching block reports `Unchanged`.
+///
+/// Result is tagged `Capability::Consumer` for logging; the `CLAUDE.md` path in
+/// the result distinguishes it from the `SKILL.md` consumer artifact.
+#[must_use]
+pub fn install_pointer(scope: Scope, home: &Path, cwd: &Path) -> ArtifactResult {
+    let path = resolve_pointer_path(scope, home, cwd);
+    let existing = match fs_err::read_to_string(&path) {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return ArtifactResult::Failed {
+                agent: AgentId::ClaudeCode,
+                capability: Capability::Consumer,
+                error: RepographError::Io(e),
+            };
+        }
+    };
+
+    let to_write = match splice_managed_section(existing.as_deref(), POINTER) {
+        SpliceOutcome::Identical => {
+            return ArtifactResult::Unchanged {
+                agent: AgentId::ClaudeCode,
+                capability: Capability::Consumer,
+                path,
+            };
+        }
+        SpliceOutcome::Replaced(s) | SpliceOutcome::Appended(s) | SpliceOutcome::FreshWrite(s) => s,
+    };
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = fs_err::create_dir_all(parent) {
+                return ArtifactResult::Failed {
+                    agent: AgentId::ClaudeCode,
+                    capability: Capability::Consumer,
+                    error: RepographError::Io(e),
+                };
+            }
+        }
+    }
+
+    match fs_err::write(&path, to_write) {
+        Ok(()) => ArtifactResult::Written {
+            agent: AgentId::ClaudeCode,
+            capability: Capability::Consumer,
+            path,
+        },
+        Err(e) => ArtifactResult::Failed {
+            agent: AgentId::ClaudeCode,
+            capability: Capability::Consumer,
+            error: RepographError::Io(e),
+        },
+    }
+}
+
 /// Extract the inner-body portion of `render_artifact`'s output — what should
 /// land between `DELIMITER_BEGIN` and `DELIMITER_END`.
 ///
@@ -699,6 +785,13 @@ pub fn install_artifacts(
         for &capability in capabilities_for(agent) {
             let path = resolve_path(agent, capability, scope, home, cwd);
             results.push(install_one(agent, capability, &path, force));
+        }
+
+        // Claude Code loads SKILL.md lazily (description-only up front), so it
+        // rarely reaches for the skill unasked. Splice an always-loaded pointer
+        // into CLAUDE.md so discovery is reflexive. Claude-only by convention.
+        if agent == AgentId::ClaudeCode {
+            results.push(install_pointer(scope, home, cwd));
         }
     }
     results
@@ -1262,14 +1355,20 @@ mod tests {
             let agents = vec![AgentId::AgentsMd, AgentId::ClaudeCode];
             let results = install_artifacts(&agents, Scope::User, &home, &cwd, false);
             // Flat-file AgentsMd → 1 combined artifact; wholly-owned ClaudeCode
-            // → 2 (Consumer then Setup). Selection order is preserved.
-            assert_eq!(results.len(), 3);
+            // → 2 SKILL.md (Consumer then Setup) + 1 always-loaded CLAUDE.md
+            // pointer. Selection order is preserved.
+            assert_eq!(results.len(), 4);
             assert_eq!(results[0].agent(), AgentId::AgentsMd);
             assert_eq!(results[0].capability(), Some(Capability::Consumer));
             assert_eq!(results[1].agent(), AgentId::ClaudeCode);
             assert_eq!(results[1].capability(), Some(Capability::Consumer));
             assert_eq!(results[2].agent(), AgentId::ClaudeCode);
             assert_eq!(results[2].capability(), Some(Capability::Setup));
+            // The CLAUDE.md pointer follows the two skills, tagged Consumer.
+            assert_eq!(results[3].agent(), AgentId::ClaudeCode);
+            assert_eq!(results[3].capability(), Some(Capability::Consumer));
+            let pointer_path = home.join(".claude/CLAUDE.md");
+            assert!(pointer_path.exists(), "always-loaded pointer written");
         }
 
         #[test]
@@ -1281,7 +1380,8 @@ mod tests {
             fs_err::create_dir_all(&cwd).unwrap();
             let results =
                 install_artifacts(&[AgentId::ClaudeCode], Scope::User, &home, &cwd, false);
-            assert_eq!(results.len(), 2);
+            // 2 SKILL.md artifacts + 1 always-loaded CLAUDE.md pointer.
+            assert_eq!(results.len(), 3);
             // The setup skill lands at its own discrete path.
             let setup_path = home.join(".claude/skills/repograph-setup/SKILL.md");
             assert!(setup_path.exists(), "setup SKILL.md should be written");
@@ -1330,8 +1430,8 @@ mod tests {
                     &cwd,
                     false,
                 );
-                // AgentsMd → 1 (Failed); ClaudeCode → 2 (Consumer, Setup).
-                assert_eq!(results.len(), 3);
+                // AgentsMd → 1 (Failed); ClaudeCode → 2 SKILL.md + 1 pointer.
+                assert_eq!(results.len(), 4);
                 assert!(matches!(results[0], ArtifactResult::Failed { .. }));
                 assert!(matches!(
                     results[1],
@@ -1339,6 +1439,10 @@ mod tests {
                 ));
                 assert!(matches!(
                     results[2],
+                    ArtifactResult::Written { .. } | ArtifactResult::Unchanged { .. }
+                ));
+                assert!(matches!(
+                    results[3],
                     ArtifactResult::Written { .. } | ArtifactResult::Unchanged { .. }
                 ));
                 // Restore mode so TempDir can clean up.
@@ -1364,12 +1468,14 @@ mod tests {
                 &cwd,
                 false,
             );
-            // Copilot → 1 Skipped; AgentsMd → 1 Written; ClaudeCode → 2 Written.
-            assert_eq!(results.len(), 4);
+            // Copilot → 1 Skipped; AgentsMd → 1 Written; ClaudeCode → 2 SKILL.md
+            // + 1 CLAUDE.md pointer, all Written.
+            assert_eq!(results.len(), 5);
             assert!(matches!(results[0], ArtifactResult::Skipped { .. }));
             assert!(matches!(results[1], ArtifactResult::Written { .. }));
             assert!(matches!(results[2], ArtifactResult::Written { .. }));
             assert!(matches!(results[3], ArtifactResult::Written { .. }));
+            assert!(matches!(results[4], ArtifactResult::Written { .. }));
         }
     }
 }

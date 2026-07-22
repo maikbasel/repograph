@@ -8,7 +8,7 @@
 //! downstream consumers (CI health gates, the future MCP server) can parse
 //! without ambiguity.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -229,6 +229,44 @@ impl DoctorReport {
     }
 }
 
+/// Judge the freshness of a single managed artifact from its contents (or
+/// absence), producing an `ok`/`warn` finding. `noun` names the artifact in the
+/// message ("skill artifact", "always-loaded pointer") so one rule serves both.
+fn freshness_finding(target: String, noun: &str, found: Option<String>) -> Finding {
+    use crate::agent_artifact::{ARTIFACT_BODY_VERSION, installed_version};
+
+    match found {
+        None => Finding {
+            check: Check::SkillArtifactFresh,
+            severity: Severity::Warn,
+            target,
+            message: format!("{noun} missing — run `repograph init`"),
+        },
+        Some(contents) => match installed_version(&contents) {
+            Some(v) if v >= ARTIFACT_BODY_VERSION => Finding {
+                check: Check::SkillArtifactFresh,
+                severity: Severity::Ok,
+                target,
+                message: format!("{noun} current (v{v})"),
+            },
+            Some(v) => Finding {
+                check: Check::SkillArtifactFresh,
+                severity: Severity::Warn,
+                target,
+                message: format!(
+                    "{noun} is stale (installed v{v} < current v{ARTIFACT_BODY_VERSION}) — run `repograph init`"
+                ),
+            },
+            None => Finding {
+                check: Check::SkillArtifactFresh,
+                severity: Severity::Warn,
+                target,
+                message: format!("{noun} has no version stamp — run `repograph init`"),
+            },
+        },
+    }
+}
+
 /// Build the per-(agent, capability) freshness findings. Pure and read-only.
 fn skill_artifact_findings(
     selected: &[crate::agents::AgentId],
@@ -236,8 +274,19 @@ fn skill_artifact_findings(
     cwd: &Path,
 ) -> Vec<Finding> {
     use crate::agent_artifact::{
-        ARTIFACT_BODY_VERSION, Scope, capabilities_for, has_artifact_writer, installed_version,
-        resolve_path,
+        DELIMITER_BEGIN_PREFIX, Scope, capabilities_for, has_artifact_writer, resolve_path,
+        resolve_pointer_path,
+    };
+    use crate::agents::AgentId;
+
+    // Read the managed artifact at whichever scope has it. A file is only
+    // "found" if it actually carries repograph's managed block — a shared file
+    // (CLAUDE.md) may exist with user-only content, which counts as missing.
+    let read_managed = |paths: [PathBuf; 2]| -> Option<String> {
+        paths
+            .into_iter()
+            .find_map(|p| fs_err::read_to_string(&p).ok())
+            .filter(|c| c.contains(DELIMITER_BEGIN_PREFIX))
     };
 
     let mut findings = Vec::new();
@@ -248,44 +297,27 @@ fn skill_artifact_findings(
         for &capability in capabilities_for(agent) {
             let target = format!("{} / {}", agent.as_str(), capability.skill_name());
             // The artifact may live at user or project scope; accept either.
-            let user_path = resolve_path(agent, capability, Scope::User, home, cwd);
-            let project_path = resolve_path(agent, capability, Scope::Project, home, cwd);
-            let found = [user_path, project_path]
-                .into_iter()
-                .find_map(|p| fs_err::read_to_string(&p).ok());
+            let found = read_managed([
+                resolve_path(agent, capability, Scope::User, home, cwd),
+                resolve_path(agent, capability, Scope::Project, home, cwd),
+            ]);
+            findings.push(freshness_finding(target, "skill artifact", found));
+        }
 
-            let finding = match found {
-                None => Finding {
-                    check: Check::SkillArtifactFresh,
-                    severity: Severity::Warn,
-                    target,
-                    message: "skill artifact missing — run `repograph init`".to_string(),
-                },
-                Some(contents) => match installed_version(&contents) {
-                    Some(v) if v >= ARTIFACT_BODY_VERSION => Finding {
-                        check: Check::SkillArtifactFresh,
-                        severity: Severity::Ok,
-                        target,
-                        message: format!("skill artifact current (v{v})"),
-                    },
-                    Some(v) => Finding {
-                        check: Check::SkillArtifactFresh,
-                        severity: Severity::Warn,
-                        target,
-                        message: format!(
-                            "skill artifact is stale (installed v{v} < current v{ARTIFACT_BODY_VERSION}) — run `repograph init`"
-                        ),
-                    },
-                    None => Finding {
-                        check: Check::SkillArtifactFresh,
-                        severity: Severity::Warn,
-                        target,
-                        message: "skill artifact has no version stamp — run `repograph init`"
-                            .to_string(),
-                    },
-                },
-            };
-            findings.push(finding);
+        // Claude Code also gets an always-loaded CLAUDE.md pointer (user or
+        // project scope). Track its freshness the same way; it shares the
+        // managed-delimiter version stamp, so a version bump flags a pointer
+        // that has not been re-spliced by `repograph init`.
+        if agent == AgentId::ClaudeCode {
+            let found = read_managed([
+                resolve_pointer_path(Scope::User, home, cwd),
+                resolve_pointer_path(Scope::Project, home, cwd),
+            ]);
+            findings.push(freshness_finding(
+                format!("{} / pointer", agent.as_str()),
+                "always-loaded pointer",
+                found,
+            ));
         }
     }
     findings
@@ -965,8 +997,9 @@ mod tests {
         let home = tmp.path().join("home");
         let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
             .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
-        // claude-code yields two capabilities, both missing.
-        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 2);
+        // claude-code yields two capability skills + one always-loaded pointer,
+        // all missing.
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 3);
         let f = report
             .checks
             .iter()
@@ -983,9 +1016,15 @@ mod tests {
         let home = tmp.path().join("home");
         install_current(&home, AgentId::ClaudeCode, Capability::Consumer);
         install_current(&home, AgentId::ClaudeCode, Capability::Setup);
+        let _ = crate::agent_artifact::install_pointer(
+            crate::agent_artifact::Scope::User,
+            &home,
+            Path::new("/cwd"),
+        );
         let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
             .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
-        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Ok), 2);
+        // Two skills + the pointer, all current.
+        assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Ok), 3);
         assert_eq!(count(&report, Check::SkillArtifactFresh, Severity::Warn), 0);
     }
 
@@ -1010,14 +1049,21 @@ mod tests {
         )
         .unwrap();
         install_current(&home, AgentId::ClaudeCode, Capability::Setup);
+        // Install the pointer as current so the only stale warn is the skill.
+        let _ = crate::agent_artifact::install_pointer(
+            crate::agent_artifact::Scope::User,
+            &home,
+            Path::new("/cwd"),
+        );
         let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
             .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, Path::new("/cwd"));
         let stale = report
             .checks
             .iter()
-            .find(|f| f.check == Check::SkillArtifactFresh && f.severity == Severity::Warn)
+            .find(|f| {
+                f.check == Check::SkillArtifactFresh && f.message.contains("stale")
+            })
             .expect("a stale warn finding");
-        assert!(stale.message.contains("stale"), "names staleness");
         assert!(stale.message.contains("repograph init"));
     }
 
@@ -1048,5 +1094,63 @@ mod tests {
         );
         let after = std::fs::metadata(&consumer).unwrap().modified().unwrap();
         assert_eq!(before, after, "doctor must not rewrite the artifact");
+    }
+
+    #[test]
+    fn always_loaded_pointer_freshness_is_tracked() {
+        use crate::agent_artifact::{Scope, install_pointer};
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("cwd");
+
+        // Missing pointer → a warn naming the pointer and the init hint.
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, &cwd);
+        let missing = report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SkillArtifactFresh && f.target.contains("pointer"))
+            .expect("a pointer finding");
+        assert_eq!(missing.severity, Severity::Warn);
+        assert!(missing.message.contains("missing"), "names the gap");
+        assert!(missing.message.contains("repograph init"));
+
+        // Install the pointer (project scope) → the finding flips to ok.
+        std::fs::create_dir_all(&cwd).unwrap();
+        let _ = install_pointer(Scope::Project, &home, &cwd);
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, &cwd);
+        let ok = report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SkillArtifactFresh && f.target.contains("pointer"))
+            .expect("a pointer finding");
+        assert_eq!(ok.severity, Severity::Ok, "installed pointer reads current");
+    }
+
+    #[test]
+    fn user_authored_claude_md_without_block_reads_as_missing_pointer() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(CONFIG_FILE_NAME);
+        let home = tmp.path().join("home");
+        let cwd = tmp.path().join("cwd");
+        std::fs::create_dir_all(&cwd).unwrap();
+        // A CLAUDE.md with only user prose (no managed block) must not be
+        // mistaken for an installed-but-unstamped pointer.
+        std::fs::write(cwd.join("CLAUDE.md"), "# My rules\n\nNo repograph here.\n").unwrap();
+
+        let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
+            .with_skill_artifact_check(&[AgentId::ClaudeCode], &home, &cwd);
+        let pointer = report
+            .checks
+            .iter()
+            .find(|f| f.check == Check::SkillArtifactFresh && f.target.contains("pointer"))
+            .expect("a pointer finding");
+        assert!(
+            pointer.message.contains("missing"),
+            "unblocked CLAUDE.md is missing, not unstamped, got: {}",
+            pointer.message
+        );
     }
 }
