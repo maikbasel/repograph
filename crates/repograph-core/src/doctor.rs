@@ -1060,9 +1060,7 @@ mod tests {
         let stale = report
             .checks
             .iter()
-            .find(|f| {
-                f.check == Check::SkillArtifactFresh && f.message.contains("stale")
-            })
+            .find(|f| f.check == Check::SkillArtifactFresh && f.message.contains("stale"))
             .expect("a stale warn finding");
         assert!(stale.message.contains("repograph init"));
     }

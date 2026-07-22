@@ -34,8 +34,8 @@ pub use error::RepographError;
 pub use git::{RepoState, RepoStatus, inspect, validate_git_repo};
 pub use search::{
     FIND_SCHEMA_VERSION, Hit, INDEX_DB_NAME, IndexOutcome, IndexStatus, MODEL_SUBDIR,
-    RefreshOutcome, SearchOutcome, build_index, build_index_reporting, index_db_path,
-    index_health, model_cache_dir, refresh_stale, search,
+    RefreshOutcome, SearchOutcome, build_index, build_index_reporting, index_db_path, index_health,
+    model_cache_dir, refresh_stale, search,
 };
 
 /// Crate version, sourced from `Cargo.toml`.

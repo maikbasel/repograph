@@ -750,7 +750,9 @@ mod tests {
             tf("a.rs", "fn first() {}\n"),
             tf("b.rs", "fn second_renamed() {}\n"),
         ];
-        let stats = store.reconcile_repo("r", &files2, None, None, None).unwrap();
+        let stats = store
+            .reconcile_repo("r", &files2, None, None, None)
+            .unwrap();
         assert_eq!(stats.files_unchanged, 1, "a.rs hash matched");
         assert_eq!(stats.files_indexed, 1, "b.rs re-chunked");
 
@@ -830,10 +832,22 @@ mod tests {
     fn repo_filter_scopes_results() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("api", &[tf("a.rs", "fn shared_thing() {}\n")], None, None, None)
+            .reconcile_repo(
+                "api",
+                &[tf("a.rs", "fn shared_thing() {}\n")],
+                None,
+                None,
+                None,
+            )
             .unwrap();
         store
-            .reconcile_repo("ui", &[tf("b.rs", "fn shared_thing() {}\n")], None, None, None)
+            .reconcile_repo(
+                "ui",
+                &[tf("b.rs", "fn shared_thing() {}\n")],
+                None,
+                None,
+                None,
+            )
             .unwrap();
         let all = store.search_lexical("shared_thing", &[], 10).unwrap();
         assert_eq!(all.len(), 2);
@@ -848,7 +862,13 @@ mod tests {
     fn indexed_commits_recorded() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("r", &[tf("a.rs", "fn a() {}\n")], Some("c0ffee"), None, None)
+            .reconcile_repo(
+                "r",
+                &[tf("a.rs", "fn a() {}\n")],
+                Some("c0ffee"),
+                None,
+                None,
+            )
             .unwrap();
         let commits = store.indexed_commits().unwrap();
         assert_eq!(commits.get("r"), Some(&Some("c0ffee".to_string())));
@@ -858,7 +878,13 @@ mod tests {
     fn indexed_mtime_baseline_recorded() {
         let (_tmp, mut store) = build_store();
         store
-            .reconcile_repo("r", &[tf("a.rs", "fn a() {}\n")], None, Some(1_700_000_000), None)
+            .reconcile_repo(
+                "r",
+                &[tf("a.rs", "fn a() {}\n")],
+                None,
+                Some(1_700_000_000),
+                None,
+            )
             .unwrap();
         let mtimes = store.indexed_mtimes().unwrap();
         assert_eq!(mtimes.get("r"), Some(&Some(1_700_000_000)));

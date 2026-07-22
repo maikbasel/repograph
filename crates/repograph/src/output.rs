@@ -799,7 +799,11 @@ pub fn render_update_notice<W: Write>(
     let inner = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
 
     // Bold yellow border when writing to a terminal; plain box-drawing otherwise.
-    let (on, off) = if colored { ("\x1b[1;33m", "\x1b[0m") } else { ("", "") };
+    let (on, off) = if colored {
+        ("\x1b[1;33m", "\x1b[0m")
+    } else {
+        ("", "")
+    };
     let bar = "─".repeat(inner + 2);
 
     writeln!(writer)?;
@@ -887,7 +891,10 @@ mod tests {
             "points at the update command: {s}"
         );
         assert!(!s.contains('\x1b'), "no ANSI when uncolored: {s:?}");
-        assert!(s.contains('╭') && s.contains('╯'), "boxed for prominence: {s}");
+        assert!(
+            s.contains('╭') && s.contains('╯'),
+            "boxed for prominence: {s}"
+        );
     }
 
     fn fixture() -> BTreeMap<String, Repo> {

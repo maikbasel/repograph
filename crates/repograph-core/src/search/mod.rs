@@ -509,7 +509,10 @@ mod tests {
         refresh_stale(&data, &repos, false, &mut noop).unwrap();
         // Second call with no change → nothing stale, nothing reindexed.
         let fresh = refresh_stale(&data, &repos, false, &mut noop).unwrap();
-        assert!(fresh.refreshed.is_empty(), "unchanged repo must not refresh");
+        assert!(
+            fresh.refreshed.is_empty(),
+            "unchanged repo must not refresh"
+        );
 
         // Edit a tracked file WITHOUT committing, and stamp its mtime strictly
         // past the baseline (mtime is ~1s-granular, so a same-second write could

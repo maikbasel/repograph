@@ -178,7 +178,10 @@ fn claude_code_user_scope_pointer_lands_in_home_claude_md() {
         .success();
 
     let claude_md = f.home.join(".claude/CLAUDE.md");
-    assert!(claude_md.exists(), "user-scope pointer missing at {claude_md:?}");
+    assert!(
+        claude_md.exists(),
+        "user-scope pointer missing at {claude_md:?}"
+    );
     let body = read(&claude_md);
     assert!(
         body.contains("<!-- repograph:begin") && body.contains("repograph-setup"),

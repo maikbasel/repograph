@@ -235,7 +235,8 @@ fn find_workspace_filter_scopes_results() {
 fn find_without_index_auto_builds_and_returns_hits() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
-    let api = fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn zzztopmarker() {}\n")]);
+    let api =
+        fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn zzztopmarker() {}\n")]);
     register(&config_dir, &api, "api");
     // Note: no `repograph index` run — auto-refresh must build it on demand.
     let out = repograph_cmd(&config_dir)
@@ -272,8 +273,11 @@ fn find_no_refresh_without_index_exits_3_and_guides_user() {
 fn find_auto_refreshes_uncommitted_edit() {
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
-    let api =
-        fixture_git_repo_with_files(tmp.path(), "api", &[("a.rs", "pub fn oldmarker_frob() {}\n")]);
+    let api = fixture_git_repo_with_files(
+        tmp.path(),
+        "api",
+        &[("a.rs", "pub fn oldmarker_frob() {}\n")],
+    );
     register(&config_dir, &api, "api");
     build_index(&config_dir);
 
