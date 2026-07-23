@@ -797,6 +797,60 @@ pub fn install_artifacts(
     results
 }
 
+/// Refresh every already-installed managed artifact for `selected`, in place.
+///
+/// This is the engine behind `repograph doctor --fix`: for each selected
+/// agent it re-runs the installer against every candidate artifact **whose
+/// target file already exists** — at either scope — rewriting only the managed
+/// region so a stale block is brought to the current version and a shared file
+/// missing the block gets it spliced in. Content outside the managed region is
+/// byte-preserved (the installer never uses `force` here).
+///
+/// Crucially it **never creates a missing artifact**: a target file that does
+/// not exist at any scope is skipped, because creating it means choosing a
+/// scope — a decision only `repograph init` makes. So `--fix` is a safe,
+/// scope-free "update what's installed" that leaves fresh installs to `init`.
+///
+/// Returns one [`ArtifactResult`] per file actually touched (a `Current` file
+/// yields `Unchanged`), in selection order. Log-free, per the core boundary.
+#[must_use]
+pub fn refresh_installed_artifacts(
+    selected: &[AgentId],
+    home: &Path,
+    cwd: &Path,
+) -> Vec<ArtifactResult> {
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for &agent in selected {
+        if !has_artifact_writer(agent) {
+            continue;
+        }
+        for &capability in capabilities_for(agent) {
+            for scope in [Scope::User, Scope::Project] {
+                let path = resolve_path(agent, capability, scope, home, cwd);
+                // Scope-insensitive agents resolve both scopes to one path;
+                // dedupe so we install it once.
+                if !seen.insert(path.clone()) {
+                    continue;
+                }
+                if path.exists() {
+                    results.push(install_one(agent, capability, &path, false));
+                }
+            }
+        }
+
+        if agent == AgentId::ClaudeCode {
+            for scope in [Scope::User, Scope::Project] {
+                let path = resolve_pointer_path(scope, home, cwd);
+                if seen.insert(path.clone()) && path.exists() {
+                    results.push(install_pointer(scope, home, cwd));
+                }
+            }
+        }
+    }
+    results
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -1476,6 +1530,124 @@ mod tests {
             assert!(matches!(results[2], ArtifactResult::Written { .. }));
             assert!(matches!(results[3], ArtifactResult::Written { .. }));
             assert!(matches!(results[4], ArtifactResult::Written { .. }));
+        }
+    }
+
+    // ---- refresh_installed_artifacts (doctor --fix engine) ----
+
+    mod refresh {
+        use super::*;
+
+        /// Read a file, panicking on failure (test-only).
+        fn read(p: &Path) -> String {
+            fs_err::read_to_string(p).unwrap()
+        }
+
+        #[test]
+        fn rewrites_a_stale_skill_block_in_place() {
+            let dir = TempDir::new().unwrap();
+            let home = dir.path().join("home");
+            let cwd = dir.path().join("proj");
+            fs_err::create_dir_all(&home).unwrap();
+            fs_err::create_dir_all(&cwd).unwrap();
+            // Plant an old-version SKILL.md at the user-scope consumer path.
+            let p = resolve_path(
+                AgentId::ClaudeCode,
+                Capability::Consumer,
+                Scope::User,
+                &home,
+                &cwd,
+            );
+            fs_err::create_dir_all(p.parent().unwrap()).unwrap();
+            fs_err::write(
+                &p,
+                "---\nname: repograph\n---\n\n<!-- repograph:begin v0 -->\nOLD\n<!-- repograph:end -->\n",
+            )
+            .unwrap();
+
+            let results = refresh_installed_artifacts(&[AgentId::ClaudeCode], &home, &cwd);
+
+            assert!(
+                results
+                    .iter()
+                    .any(|r| matches!(r, ArtifactResult::Written { .. })),
+                "stale skill is rewritten"
+            );
+            let after = read(&p);
+            assert!(
+                after.contains(DELIMITER_BEGIN) && !after.contains("v0"),
+                "block is brought to the current version, got:\n{after}"
+            );
+        }
+
+        #[test]
+        fn splices_pointer_into_existing_block_less_claude_md() {
+            let dir = TempDir::new().unwrap();
+            let home = dir.path().join("home");
+            let cwd = dir.path().join("proj");
+            fs_err::create_dir_all(&home).unwrap();
+            fs_err::create_dir_all(&cwd).unwrap();
+            // A project CLAUDE.md exists with only user prose — no repograph block.
+            let claude_md = cwd.join("CLAUDE.md");
+            fs_err::write(&claude_md, "# House rules\n\nBe nice.\n").unwrap();
+
+            let results = refresh_installed_artifacts(&[AgentId::ClaudeCode], &home, &cwd);
+
+            assert!(
+                results
+                    .iter()
+                    .any(|r| matches!(r, ArtifactResult::Written { .. })),
+                "pointer is spliced into the existing file"
+            );
+            let body = read(&claude_md);
+            assert!(
+                body.starts_with("# House rules\n\nBe nice.\n"),
+                "user prose preserved, got:\n{body}"
+            );
+            assert!(
+                body.contains(DELIMITER_BEGIN_PREFIX),
+                "managed block added, got:\n{body}"
+            );
+        }
+
+        #[test]
+        fn never_creates_a_missing_artifact() {
+            let dir = TempDir::new().unwrap();
+            let home = dir.path().join("home");
+            let cwd = dir.path().join("proj");
+            fs_err::create_dir_all(&home).unwrap();
+            fs_err::create_dir_all(&cwd).unwrap();
+            // Nothing installed anywhere.
+            let results = refresh_installed_artifacts(&[AgentId::ClaudeCode], &home, &cwd);
+            assert!(results.is_empty(), "no existing files → nothing touched");
+            assert!(
+                !cwd.join("CLAUDE.md").exists(),
+                "must not create a CLAUDE.md from scratch (scope is init's call)"
+            );
+            assert!(
+                !home.join(".claude/skills/repograph/SKILL.md").exists(),
+                "must not create a SKILL.md from scratch"
+            );
+        }
+
+        #[test]
+        fn current_artifact_is_left_unchanged() {
+            let dir = TempDir::new().unwrap();
+            let home = dir.path().join("home");
+            let cwd = dir.path().join("proj");
+            fs_err::create_dir_all(&home).unwrap();
+            fs_err::create_dir_all(&cwd).unwrap();
+            // Install everything current first.
+            let _ = install_artifacts(&[AgentId::ClaudeCode], Scope::User, &home, &cwd, false);
+
+            let results = refresh_installed_artifacts(&[AgentId::ClaudeCode], &home, &cwd);
+            assert!(
+                !results.is_empty()
+                    && results
+                        .iter()
+                        .all(|r| matches!(r, ArtifactResult::Unchanged { .. })),
+                "already-current artifacts report Unchanged, not Written"
+            );
         }
     }
 }

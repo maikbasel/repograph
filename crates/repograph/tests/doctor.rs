@@ -81,6 +81,28 @@ fn run_doctor_json(config_dir: &Path) -> (serde_json::Value, i32) {
     (v, code)
 }
 
+/// Run `doctor --fix --json`, returning the post-fix report, exit code, and
+/// stderr (where the "refreshed <path>" lines land).
+fn run_doctor_fix_json(config_dir: &Path) -> (serde_json::Value, i32, String) {
+    let cwd = config_dir
+        .parent()
+        .expect("config_dir always lives under a tempdir");
+    let out = repograph_cmd(config_dir)
+        .current_dir(cwd)
+        .env("HOME", cwd)
+        .env("USERPROFILE", cwd)
+        .arg("doctor")
+        .arg("--fix")
+        .arg("--json")
+        .assert();
+    let output = out.get_output();
+    let code = output.status.code().unwrap_or(-1);
+    let v: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout parses as JSON");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (v, code, stderr)
+}
+
 fn find_findings<'a>(
     v: &'a serde_json::Value,
     check: &str,
@@ -151,6 +173,96 @@ fn missing_skill_artifact_emits_warn_with_init_hint() {
             .unwrap()
             .contains("repograph-setup"),
         "target names the missing capability"
+    );
+}
+
+#[test]
+fn doctor_fix_refreshes_a_stale_skill_and_reports_ok() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    init_agents(&config_dir, "claude-code");
+    let cwd = config_dir.parent().unwrap();
+    // Downgrade the installed consumer skill to an old version stamp so the
+    // freshness check sees it as stale.
+    let consumer = cwd.join(".claude/skills/repograph/SKILL.md");
+    std::fs::write(
+        &consumer,
+        "---\nname: repograph\n---\n\n<!-- repograph:begin v0 -->\nOLD\n<!-- repograph:end -->\n",
+    )
+    .unwrap();
+
+    // A read-only doctor sees the staleness and points at `doctor --fix`.
+    let (before, _) = run_doctor_json(&config_dir);
+    let stale = find_findings(&before, "SkillArtifactFresh", "warn");
+    assert!(
+        stale.iter().any(|f| f["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph doctor --fix")),
+        "stale finding steers to --fix, got: {stale:?}"
+    );
+
+    // `--fix` refreshes it in place; the post-fix report shows it current.
+    let (after, code, stderr) = run_doctor_fix_json(&config_dir);
+    assert_eq!(code, 0, "fix leaves the report clean of errors");
+    assert_eq!(
+        find_findings(&after, "SkillArtifactFresh", "warn").len(),
+        0,
+        "no skill artifact remains stale after --fix"
+    );
+    assert!(
+        stderr.contains("refreshed"),
+        "stderr announces the refresh, got:\n{stderr}"
+    );
+    let body = std::fs::read_to_string(&consumer).unwrap();
+    assert!(
+        body.contains("<!-- repograph:begin v1 -->") && !body.contains("v0"),
+        "skill file bumped to the current version, got:\n{body}"
+    );
+}
+
+#[test]
+fn doctor_fix_splices_pointer_into_existing_block_less_claude_md() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    init_agents(&config_dir, "claude-code");
+    let cwd = config_dir.parent().unwrap();
+    // Simulate a pre-pointer-feature project: a user CLAUDE.md with no managed
+    // block (as if it predates the always-loaded pointer).
+    let claude_md = cwd.join("CLAUDE.md");
+    std::fs::write(&claude_md, "# House rules\n\nBe nice.\n").unwrap();
+
+    // Doctor reports the pointer as fixable-in-place, not missing.
+    let (before, _) = run_doctor_json(&config_dir);
+    let pointer_warn = find_findings(&before, "SkillArtifactFresh", "warn")
+        .into_iter()
+        .find(|f| f["target"].as_str().unwrap().contains("pointer"))
+        .expect("a pointer warn");
+    assert!(
+        pointer_warn["message"]
+            .as_str()
+            .unwrap()
+            .contains("repograph doctor --fix"),
+        "block-less CLAUDE.md steers to --fix, got: {pointer_warn:?}"
+    );
+
+    // `--fix` splices the block in and preserves the user's prose.
+    let (after, code, _) = run_doctor_fix_json(&config_dir);
+    assert_eq!(code, 0);
+    let body = std::fs::read_to_string(&claude_md).unwrap();
+    assert!(
+        body.starts_with("# House rules\n\nBe nice.\n"),
+        "user prose preserved, got:\n{body}"
+    );
+    assert!(
+        body.contains("<!-- repograph:begin"),
+        "pointer block spliced in, got:\n{body}"
+    );
+    assert!(
+        find_findings(&after, "SkillArtifactFresh", "warn")
+            .iter()
+            .all(|f| !f["target"].as_str().unwrap().contains("pointer")),
+        "pointer no longer warns after --fix"
     );
 }
 

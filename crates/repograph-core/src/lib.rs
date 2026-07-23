@@ -19,7 +19,8 @@ pub use agent_artifact::{
     DELIMITER_BEGIN, DELIMITER_BEGIN_PREFIX, DELIMITER_END, REASON_COPILOT_DEFERRED,
     SETUP_BODY as AGENT_ARTIFACT_SETUP_BODY, SETUP_SUMMARY as AGENT_ARTIFACT_SETUP_SUMMARY,
     SUMMARY as AGENT_ARTIFACT_SUMMARY, capabilities_for, has_artifact_writer, install_artifacts,
-    install_one, installed_version, render_artifact, resolve_path, scope_is_meaningful,
+    install_one, installed_version, refresh_installed_artifacts, render_artifact, resolve_path,
+    scope_is_meaningful,
 };
 pub use agents::AgentId;
 pub use config::{

@@ -229,41 +229,92 @@ impl DoctorReport {
     }
 }
 
-/// Judge the freshness of a single managed artifact from its contents (or
-/// absence), producing an `ok`/`warn` finding. `noun` names the artifact in the
-/// message ("skill artifact", "always-loaded pointer") so one rule serves both.
-fn freshness_finding(target: String, noun: &str, found: Option<String>) -> Finding {
-    use crate::agent_artifact::{ARTIFACT_BODY_VERSION, installed_version};
+/// The on-disk state of one managed artifact, resolved across its candidate
+/// scope paths. Drives both the doctor message and whether `doctor --fix` can
+/// remediate it.
+enum ArtifactState {
+    /// A file carries the managed block at the current version. Nothing to do.
+    Current(u32),
+    /// A file carries the managed block, but at an older version stamp.
+    Stale { installed: u32, path: PathBuf },
+    /// A file carries the managed block but no parseable version stamp.
+    Unstamped(PathBuf),
+    /// A shared target file (e.g. `CLAUDE.md`) exists with user content but no
+    /// repograph block. `--fix` can splice the block in without guessing scope,
+    /// since the file itself is right there.
+    PresentNoBlock(PathBuf),
+    /// No target file exists at any candidate scope. Only `init` can create it
+    /// (it must choose a scope), so `--fix` leaves it alone.
+    Absent,
+}
 
-    match found {
-        None => Finding {
-            check: Check::SkillArtifactFresh,
-            severity: Severity::Warn,
-            target,
-            message: format!("{noun} missing — run `repograph init`"),
-        },
-        Some(contents) => match installed_version(&contents) {
-            Some(v) if v >= ARTIFACT_BODY_VERSION => Finding {
-                check: Check::SkillArtifactFresh,
-                severity: Severity::Ok,
-                target,
-                message: format!("{noun} current (v{v})"),
+/// Classify a managed artifact from its candidate scope paths (first existing
+/// wins). `wholly_owned` marks files repograph owns entirely (Claude/Cursor
+/// `SKILL.md`/`.mdc`): if such a file exists it always carries the block, so a
+/// no-block state is impossible for it. Read-only.
+fn classify_artifact(candidates: &[PathBuf], wholly_owned: bool) -> ArtifactState {
+    use crate::agent_artifact::{ARTIFACT_BODY_VERSION, DELIMITER_BEGIN_PREFIX, installed_version};
+
+    for path in candidates {
+        let Ok(contents) = fs_err::read_to_string(path) else {
+            continue;
+        };
+        if !wholly_owned && !contents.contains(DELIMITER_BEGIN_PREFIX) {
+            return ArtifactState::PresentNoBlock(path.clone());
+        }
+        return match installed_version(&contents) {
+            Some(v) if v >= ARTIFACT_BODY_VERSION => ArtifactState::Current(v),
+            Some(v) => ArtifactState::Stale {
+                installed: v,
+                path: path.clone(),
             },
-            Some(v) => Finding {
-                check: Check::SkillArtifactFresh,
-                severity: Severity::Warn,
-                target,
-                message: format!(
-                    "{noun} is stale (installed v{v} < current v{ARTIFACT_BODY_VERSION}) — run `repograph init`"
-                ),
-            },
-            None => Finding {
-                check: Check::SkillArtifactFresh,
-                severity: Severity::Warn,
-                target,
-                message: format!("{noun} has no version stamp — run `repograph init`"),
-            },
-        },
+            None => ArtifactState::Unstamped(path.clone()),
+        };
+    }
+    ArtifactState::Absent
+}
+
+/// Turn an [`ArtifactState`] into an `ok`/`warn` finding. `noun` names the
+/// artifact ("skill artifact", "always-loaded pointer"). Remediation points at
+/// `repograph doctor --fix` when the target file already exists (refresh in
+/// place) and at `repograph init` only when the file must be created from
+/// scratch — the distinction the user needs to know how to update.
+fn freshness_finding(target: String, noun: &str, state: &ArtifactState) -> Finding {
+    use crate::agent_artifact::ARTIFACT_BODY_VERSION;
+
+    let (severity, message) = match state {
+        ArtifactState::Current(v) => (Severity::Ok, format!("{noun} current (v{v})")),
+        ArtifactState::Stale { installed, path } => (
+            Severity::Warn,
+            format!(
+                "{noun} is stale (installed v{installed} < current v{ARTIFACT_BODY_VERSION}) at {} — run `repograph doctor --fix` to refresh it in place",
+                path.display()
+            ),
+        ),
+        ArtifactState::Unstamped(path) => (
+            Severity::Warn,
+            format!(
+                "{noun} has no version stamp at {} — run `repograph doctor --fix` to refresh it in place",
+                path.display()
+            ),
+        ),
+        ArtifactState::PresentNoBlock(path) => (
+            Severity::Warn,
+            format!(
+                "{noun} not yet added to existing {} — run `repograph doctor --fix` to splice it in (your content is preserved)",
+                path.display()
+            ),
+        ),
+        ArtifactState::Absent => (
+            Severity::Warn,
+            format!("{noun} missing — run `repograph init` to install it"),
+        ),
+    };
+    Finding {
+        check: Check::SkillArtifactFresh,
+        severity,
+        target,
+        message,
     }
 }
 
@@ -274,20 +325,10 @@ fn skill_artifact_findings(
     cwd: &Path,
 ) -> Vec<Finding> {
     use crate::agent_artifact::{
-        DELIMITER_BEGIN_PREFIX, Scope, capabilities_for, has_artifact_writer, resolve_path,
-        resolve_pointer_path,
+        Scope, capabilities_for, has_artifact_writer, resolve_path, resolve_pointer_path,
+        wholly_owned_file,
     };
     use crate::agents::AgentId;
-
-    // Read the managed artifact at whichever scope has it. A file is only
-    // "found" if it actually carries repograph's managed block — a shared file
-    // (CLAUDE.md) may exist with user-only content, which counts as missing.
-    let read_managed = |paths: [PathBuf; 2]| -> Option<String> {
-        paths
-            .into_iter()
-            .find_map(|p| fs_err::read_to_string(&p).ok())
-            .filter(|c| c.contains(DELIMITER_BEGIN_PREFIX))
-    };
 
     let mut findings = Vec::new();
     for &agent in selected {
@@ -296,27 +337,35 @@ fn skill_artifact_findings(
         }
         for &capability in capabilities_for(agent) {
             let target = format!("{} / {}", agent.as_str(), capability.skill_name());
-            // The artifact may live at user or project scope; accept either.
-            let found = read_managed([
-                resolve_path(agent, capability, Scope::User, home, cwd),
-                resolve_path(agent, capability, Scope::Project, home, cwd),
-            ]);
-            findings.push(freshness_finding(target, "skill artifact", found));
+            // The artifact may live at user or project scope; first existing wins.
+            let state = classify_artifact(
+                &[
+                    resolve_path(agent, capability, Scope::User, home, cwd),
+                    resolve_path(agent, capability, Scope::Project, home, cwd),
+                ],
+                wholly_owned_file(agent),
+            );
+            findings.push(freshness_finding(target, "skill artifact", &state));
         }
 
         // Claude Code also gets an always-loaded CLAUDE.md pointer (user or
         // project scope). Track its freshness the same way; it shares the
         // managed-delimiter version stamp, so a version bump flags a pointer
-        // that has not been re-spliced by `repograph init`.
+        // that has not been re-spliced by `repograph init`. CLAUDE.md is a
+        // shared file, so an existing block-less CLAUDE.md is fixable, not
+        // absent.
         if agent == AgentId::ClaudeCode {
-            let found = read_managed([
-                resolve_pointer_path(Scope::User, home, cwd),
-                resolve_pointer_path(Scope::Project, home, cwd),
-            ]);
+            let state = classify_artifact(
+                &[
+                    resolve_pointer_path(Scope::User, home, cwd),
+                    resolve_pointer_path(Scope::Project, home, cwd),
+                ],
+                false,
+            );
             findings.push(freshness_finding(
                 format!("{} / pointer", agent.as_str()),
                 "always-loaded pointer",
-                found,
+                &state,
             ));
         }
     }
@@ -1062,7 +1111,12 @@ mod tests {
             .iter()
             .find(|f| f.check == Check::SkillArtifactFresh && f.message.contains("stale"))
             .expect("a stale warn finding");
-        assert!(stale.message.contains("repograph init"));
+        // A stale artifact exists on disk, so the fix is an in-place refresh.
+        assert!(
+            stale.message.contains("repograph doctor --fix"),
+            "stale points at the in-place refresh, got: {}",
+            stale.message
+        );
     }
 
     #[test]
@@ -1128,14 +1182,15 @@ mod tests {
     }
 
     #[test]
-    fn user_authored_claude_md_without_block_reads_as_missing_pointer() {
+    fn user_authored_claude_md_without_block_reads_as_fixable_pointer() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join(CONFIG_FILE_NAME);
         let home = tmp.path().join("home");
         let cwd = tmp.path().join("cwd");
         std::fs::create_dir_all(&cwd).unwrap();
-        // A CLAUDE.md with only user prose (no managed block) must not be
-        // mistaken for an installed-but-unstamped pointer.
+        // A CLAUDE.md with only user prose (no managed block) is not "unstamped"
+        // (that would imply a malformed block); it is a shared file the pointer
+        // can be spliced into in place, so the fix is `doctor --fix`, not init.
         std::fs::write(cwd.join("CLAUDE.md"), "# My rules\n\nNo repograph here.\n").unwrap();
 
         let report = DoctorReport::run(Ok(&Config::default()), &path, ts())
@@ -1145,9 +1200,11 @@ mod tests {
             .iter()
             .find(|f| f.check == Check::SkillArtifactFresh && f.target.contains("pointer"))
             .expect("a pointer finding");
+        assert_eq!(pointer.severity, Severity::Warn);
         assert!(
-            pointer.message.contains("missing"),
-            "unblocked CLAUDE.md is missing, not unstamped, got: {}",
+            pointer.message.contains("not yet added")
+                && pointer.message.contains("repograph doctor --fix"),
+            "block-less CLAUDE.md is fixable in place, got: {}",
             pointer.message
         );
     }

@@ -12,7 +12,10 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Parser;
-use repograph_core::{CONFIG_FILE_NAME, Config, DoctorReport, RepographError, index_health};
+use repograph_core::{
+    ArtifactResult, CONFIG_FILE_NAME, Config, DoctorReport, RepographError, index_health,
+    refresh_installed_artifacts,
+};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -25,6 +28,15 @@ pub struct Args {
     /// `comfy-table` summary plus a `<N> ok · <M> warn · <K> error` footer.
     #[arg(long)]
     pub json: bool,
+
+    /// Refresh stale or un-spliced skill artifacts in place before reporting.
+    /// Re-runs the installer for every managed artifact that already exists
+    /// (any scope), bringing its version stamp current and splicing the block
+    /// into a shared file that lacks it — content outside the block is
+    /// preserved. Never creates a missing artifact (that needs `init`, which
+    /// chooses a scope). The rendered report reflects the post-fix state.
+    #[arg(long)]
+    pub fix: bool,
 }
 
 /// Build the doctor report, render it to stdout, signal exit `1` via
@@ -74,13 +86,18 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
         Err(_) => report,
     };
 
-    // Read-only freshness check for the installed skill artifacts. Resolves the
-    // expected paths under the host home / cwd and compares the version stamp;
-    // it never writes. Skipped when home is unresolvable or `[agents]` is absent
-    // (an empty selection produces no findings).
+    // Optionally refresh installed skill artifacts in place (`--fix`), then run
+    // the read-only freshness check. Both resolve paths under host home / cwd
+    // and are skipped when home is unresolvable or `[agents]` is absent (an
+    // empty selection produces no findings and nothing to fix). The refresh
+    // runs *before* the check so the rendered report shows the post-fix state.
     let report = match (&load, host_home(), std::env::current_dir()) {
         (Ok(cfg), Some(home), Ok(cwd)) => {
             let selected = cfg.agents().map_or(&[][..], |a| a.selected.as_slice());
+            if args.fix {
+                let fixed = refresh_installed_artifacts(selected, &home, &cwd);
+                log_fix_results(&fixed);
+            }
             report.with_skill_artifact_check(selected, &home, &cwd)
         }
         _ => report,
@@ -106,6 +123,31 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
         });
     }
     Ok(())
+}
+
+/// Emit one stderr line per artifact `--fix` touched, per the logging contract
+/// (stdout stays reserved for the report). A `Written` result is a real
+/// refresh; `Unchanged` means it was already current; `Failed` is surfaced as a
+/// warning without aborting the report.
+fn log_fix_results(results: &[ArtifactResult]) {
+    for r in results {
+        match r {
+            ArtifactResult::Written { agent, path, .. } => {
+                tracing::info!(agent = agent.as_str(), path = %path.display(), "artifact refreshed");
+                eprintln!("refreshed {}", path.display());
+            }
+            ArtifactResult::Unchanged { agent, path, .. } => {
+                tracing::debug!(agent = agent.as_str(), path = %path.display(), "artifact already current");
+            }
+            ArtifactResult::Failed { agent, error, .. } => {
+                tracing::warn!(agent = agent.as_str(), err = ?error, "artifact refresh failed");
+                eprintln!("could not refresh artifact for {}: {error}", agent.as_str());
+            }
+            // `refresh_installed_artifacts` gates on `has_artifact_writer`, so a
+            // Skipped result never reaches here.
+            ArtifactResult::Skipped { .. } => {}
+        }
+    }
 }
 
 fn now_rfc3339() -> String {
