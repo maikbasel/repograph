@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/maikbasel/repograph/compare/repograph-v0.4.0...repograph-v0.5.0) - 2026-07-23
+
+### Added
+
+- *(doctor)* add --fix and concrete refresh guidance for skill artifacts
+- *(init)* splice an always-loaded repograph pointer into CLAUDE.md
+- *(find)* auto-refresh stale repos before search
+- *(cli)* make update notice prominent and show it on bare invocation
+
+### Other
+
+- apply rustfmt to new code
+- uppercase README.md title
+- *(readme)* add crates.io and GitHub download badges
+
 ## [0.4.0](https://github.com/maikbasel/repograph/compare/repograph-v0.3.1...repograph-v0.4.0) - 2026-07-01
 
 ### Added

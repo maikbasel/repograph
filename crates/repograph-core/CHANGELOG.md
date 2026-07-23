@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/maikbasel/repograph/compare/repograph-core-v0.4.0...repograph-core-v0.5.0) - 2026-07-23
+
+### Added
+
+- *(doctor)* add --fix and concrete refresh guidance for skill artifacts
+- *(init)* splice an always-loaded repograph pointer into CLAUDE.md
+- *(find)* auto-refresh stale repos before search
+
+### Other
+
+- satisfy clippy::manual_assert_eq in git test
+- apply rustfmt to new code
+- uppercase README.md title
+- *(readme)* add crates.io and GitHub download badges
+
 ## [0.4.0](https://github.com/maikbasel/repograph/compare/repograph-core-v0.3.1...repograph-core-v0.4.0) - 2026-07-01
 
 ### Added
