@@ -93,12 +93,12 @@ pub fn run(args: Args, config_dir: &Path) -> Result<(), RepographError> {
 
     tracing::info!(repo = %name, "edited");
 
-    if args.json {
-        if let Some(repo) = config.repos().get(&name) {
-            output::render_mutation(&Mutation::Edit {
-                repo: RepoConfirmation::new(&name, repo),
-            })?;
-        }
+    if args.json
+        && let Some(repo) = config.repos().get(&name)
+    {
+        output::render_mutation(&Mutation::Edit {
+            repo: RepoConfirmation::new(&name, repo),
+        })?;
     }
     Ok(())
 }

@@ -187,22 +187,19 @@ pub fn inspect(name: &str, path: &Path, fetch: bool) -> RepoStatus {
                     RepoState::Clean
                 };
 
-                if let Some(branch) = branch_name.as_deref() {
-                    if let Some(upstream_ref) = upstream_full_ref(&repo, branch) {
-                        status.upstream = upstream_short(&repo, &upstream_ref);
+                if let Some(branch) = branch_name.as_deref()
+                    && let Some(upstream_ref) = upstream_full_ref(&repo, branch)
+                {
+                    status.upstream = upstream_short(&repo, &upstream_ref);
 
-                        if fetch {
-                            if let Err(fetch_err) = run_fetch(&repo, branch) {
-                                status.error = Some(fetch_err);
-                            }
-                        }
+                    if fetch && let Err(fetch_err) = run_fetch(&repo, branch) {
+                        status.error = Some(fetch_err);
+                    }
 
-                        if let Some((ahead, behind)) =
-                            compute_ahead_behind(&repo, &head, &upstream_ref)
-                        {
-                            status.ahead = u32::try_from(ahead).unwrap_or(u32::MAX);
-                            status.behind = u32::try_from(behind).unwrap_or(u32::MAX);
-                        }
+                    if let Some((ahead, behind)) = compute_ahead_behind(&repo, &head, &upstream_ref)
+                    {
+                        status.ahead = u32::try_from(ahead).unwrap_or(u32::MAX);
+                        status.behind = u32::try_from(behind).unwrap_or(u32::MAX);
                     }
                 }
             } else {

@@ -203,10 +203,10 @@ pub fn resolve_agent_docs(repo_root: &Path, agents: &[AgentId]) -> (Vec<AgentDoc
             match classify_pattern(pattern) {
                 PatternKind::Flat(relpath) => {
                     let abs = repo_root.join(&relpath);
-                    if let Some(matched) = read_matched_file(&abs, &relpath, &mut warnings) {
-                        if seen.insert(relpath.clone()) {
-                            files.push(matched);
-                        }
+                    if let Some(matched) = read_matched_file(&abs, &relpath, &mut warnings)
+                        && seen.insert(relpath.clone())
+                    {
+                        files.push(matched);
                     }
                 }
                 PatternKind::Glob { parent, pattern } => {
@@ -309,10 +309,10 @@ fn expand_glob(
         }
         let rel = parent_rel.join(&file_name);
         let abs = entry.path();
-        if let Some(matched) = read_matched_file(&abs, &rel, warnings) {
-            if seen.insert(rel) {
-                files.push(matched);
-            }
+        if let Some(matched) = read_matched_file(&abs, &rel, warnings)
+            && seen.insert(rel)
+        {
+            files.push(matched);
         }
     }
 }

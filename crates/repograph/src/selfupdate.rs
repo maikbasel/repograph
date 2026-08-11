@@ -256,10 +256,10 @@ fn classify_run_error(err: &AxoupdateError, install_path: Option<PathBuf>) -> Re
 fn has_permission_denied(err: &(dyn Error + 'static)) -> bool {
     let mut current: Option<&(dyn Error + 'static)> = Some(err);
     while let Some(e) = current {
-        if let Some(io) = e.downcast_ref::<std::io::Error>() {
-            if io.kind() == ErrorKind::PermissionDenied {
-                return true;
-            }
+        if let Some(io) = e.downcast_ref::<std::io::Error>()
+            && io.kind() == ErrorKind::PermissionDenied
+        {
+            return true;
         }
         current = e.source();
     }
@@ -279,12 +279,11 @@ fn latest_throttled() -> Option<String> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let path = cache_path();
 
-    if let Some(path) = path.as_ref() {
-        if let Some(cache) = read_cache(path) {
-            if cache_is_fresh(cache.last_checked_unix, now, CACHE_TTL_SECS) {
-                return Some(cache.latest_seen);
-            }
-        }
+    if let Some(path) = path.as_ref()
+        && let Some(cache) = read_cache(path)
+        && cache_is_fresh(cache.last_checked_unix, now, CACHE_TTL_SECS)
+    {
+        return Some(cache.latest_seen);
     }
 
     let latest = match query_latest() {

@@ -588,13 +588,13 @@ fn insert_chunks(
             "INSERT INTO chunks_fts(text, chunk_id) VALUES(?1, ?2)",
             params![chunk.index_text(), chunk_id],
         )?;
-        if let Some((vectors, model)) = embeddings {
-            if let Some(v) = vectors.get(i) {
-                tx.execute(
-                    "INSERT INTO vectors(chunk_id, embedding, model) VALUES(?1, ?2, ?3)",
-                    params![chunk_id, vec_to_blob(v), model],
-                )?;
-            }
+        if let Some((vectors, model)) = embeddings
+            && let Some(v) = vectors.get(i)
+        {
+            tx.execute(
+                "INSERT INTO vectors(chunk_id, embedding, model) VALUES(?1, ?2, ?3)",
+                params![chunk_id, vec_to_blob(v), model],
+            )?;
         }
     }
     Ok(())
