@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/maikbasel/repograph/compare/repograph-v0.5.0...repograph-v0.6.0) - 2026-08-11
+
+### Added
+
+- *(mcp)* expose repograph as a stdio MCP server
+
+### Other
+
+- collapse nested if-lets flagged by clippy
+
 ## [0.5.0](https://github.com/maikbasel/repograph/compare/repograph-v0.4.0...repograph-v0.5.0) - 2026-07-23
 
 ### Added
