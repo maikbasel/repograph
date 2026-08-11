@@ -100,6 +100,8 @@ cargo dist build   # local test of release artifacts
 
 - `crates/repograph-core/src/` — domain library (no clap, no terminal output)
 - `crates/repograph-core/src/agents.rs` — built-in agent toolchain registry (IDs + file patterns)
+- `crates/repograph-core/src/mcp_registration.rs` — closed agent→MCP-config mapping; merges the `repograph` server entry into each client's config
+- `crates/repograph-core/src/envelope.rs` — shared `--json` envelope types, the single source both the CLI renderers and the MCP tools serialize from
 - `crates/repograph-core/src/config.rs` — config model and persistence
 - `crates/repograph-core/src/git.rs` — git2 introspection helpers
 - `crates/repograph-core/src/context.rs` — Context aggregation logic
@@ -110,6 +112,8 @@ cargo dist build   # local test of release artifacts
 - `crates/repograph/src/output.rs` — TTY detection and rendering (comfy-table, JSON)
 - `crates/repograph/src/prompt.rs` — cliclack helpers, detection, auto-prompt fallback
 - `crates/repograph/src/commands/` — one file per subcommand
+- `crates/repograph/src/mcp/` — MCP tool surface (transport concern, sibling of `output.rs`; keeps `rmcp`/async out of core)
+- `crates/repograph/src/reconcile.rs` — post-upgrade repair of agent artifacts + MCP registration, gated on `[settings].setup_version`
 
 **NEVER MODIFY**:
 
@@ -133,7 +137,7 @@ cargo dist build   # local test of release artifacts
 
 **Architecture Patterns**:
 
-- The workspace splits cleanly along the presentation/logic boundary: `repograph-core` owns domain types and adapters (no clap, no terminal output, no `println!`); the `repograph` binary owns presentation (clap parsing, `OutputMode`, table/JSON rendering) and depends on `repograph-core`. Agent integration ships as native per-agent instruction artifacts written by `repograph init` (see the `agent-skills` capability) — not via a separate binary.
+- The workspace splits cleanly along the presentation/logic boundary: `repograph-core` owns domain types and adapters (no clap, no terminal output, no `println!`); the `repograph` binary owns presentation (clap parsing, `OutputMode`, table/JSON rendering) and depends on `repograph-core`. Agent integration has two halves, both installed by `repograph init` and both living in the one binary: native per-agent instruction artifacts (the `agent-skills` capability) and a stdio MCP server (`repograph mcp serve`, the `mcp-server` capability). There is still no second binary — MCP is a subcommand, so the cargo-dist target matrix is unchanged.
 - Each subcommand lives in `crates/repograph/src/commands/<name>.rs` with an `Args` struct (clap derive) and a `run(args: Args) -> Result<(), RepographError>` function
 - Config model (`Config`, `Repo`, `Workspace`) lives in `crates/repograph-core/src/config.rs`, serialized via `serde` + `toml`
 - All git operations isolated in `crates/repograph-core/src/git.rs` and `crates/repograph-core/src/search/` — no `git2` imports outside the core crate

@@ -9,6 +9,7 @@ pub mod find;
 pub mod index;
 pub mod init;
 pub mod list;
+pub mod mcp;
 pub mod remove;
 pub mod status;
 pub mod switch;

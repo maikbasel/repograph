@@ -8,8 +8,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use rayon::prelude::*;
 use repograph_core::{
-    Check, Context, DoctorReport, FIND_SCHEMA_VERSION, Hit, Repo, RepoContext, RepoStatus,
-    RepographError, Scope, Severity, Workspace,
+    Check, Context, DoctorReport, FindEnvelope, Hit, ListEntry, ListEnvelope, Repo, RepoContext,
+    RepoStatus, RepographError, Scope, Severity, StatusEnvelope, Workspace,
 };
 use serde::Serialize;
 
@@ -30,14 +30,6 @@ impl OutputMode {
             Self::Tty
         }
     }
-}
-
-#[derive(Serialize)]
-struct ListEntry<'a> {
-    name: &'a str,
-    path: &'a std::path::Path,
-    description: Option<&'a str>,
-    stack: &'a [String],
 }
 
 /// The resulting registry entry echoed back in a mutation confirmation.
@@ -106,11 +98,6 @@ pub fn render_mutation(mutation: &Mutation<'_>) -> Result<(), RepographError> {
     Ok(())
 }
 
-#[derive(Serialize)]
-struct ListEnvelope<'a> {
-    repos: &'a [ListEntry<'a>],
-}
-
 /// Render the registered repositories. Writes a `comfy-table` rendering to
 /// stdout when `mode == Tty`; emits a `{ "repos": [...] }` JSON envelope when
 /// `mode == Json`. Diagnostics never reach stdout from this path.
@@ -124,12 +111,7 @@ pub fn render_repos(
 ) -> Result<(), RepographError> {
     let entries: Vec<ListEntry> = repos
         .iter()
-        .map(|(name, r)| ListEntry {
-            name,
-            path: &r.path,
-            description: r.description.as_deref(),
-            stack: &r.stack,
-        })
+        .map(|(name, r)| ListEntry::new(name, r))
         .collect();
     render_repo_entries(mode, &entries)
 }
@@ -146,12 +128,7 @@ pub fn render_repo_slice(
 ) -> Result<(), RepographError> {
     let entries: Vec<ListEntry> = repos
         .iter()
-        .map(|(name, r)| ListEntry {
-            name: name.as_str(),
-            path: &r.path,
-            description: r.description.as_deref(),
-            stack: &r.stack,
-        })
+        .map(|(name, r)| ListEntry::new(name.as_str(), r))
         .collect();
     render_repo_entries(mode, &entries)
 }
@@ -331,11 +308,6 @@ pub fn render_workspace_show(
     }
 }
 
-#[derive(Serialize)]
-struct StatusEnvelope<'a> {
-    repos: &'a [RepoStatus],
-}
-
 /// Render per-repo status entries. TTY mode produces a `comfy-table` with the
 /// documented columns; JSON mode produces a `{ "repos": [...] }` envelope
 /// where every entry includes an explicit `error` field (null on healthy rows).
@@ -380,21 +352,6 @@ fn write_status_table(statuses: &[RepoStatus]) -> Result<(), RepographError> {
     Ok(())
 }
 
-#[derive(Serialize)]
-struct FindEnvelope<'a> {
-    schema_version: u32,
-    query: &'a str,
-    /// Whether semantic (embedding) retrieval actually contributed to the
-    /// ranking. `false` for a lexical-only query or when semantic degraded.
-    semantic_used: bool,
-    /// Reason semantic retrieval was requested but unavailable (missing
-    /// feature, no embeddings, no model), or `null` when not requested or fully
-    /// satisfied. Mirrors the stderr notice so stdout-only consumers can detect
-    /// a keyword-only fallback.
-    degraded: Option<&'a str>,
-    hits: &'a [Hit],
-}
-
 /// Render cross-repo search hits to stdout. JSON mode emits a stable
 /// `{ schema_version, query, semantic_used, degraded, hits: [...] }` envelope;
 /// TTY mode renders a `comfy-table` with one row per hit (the snippet trimmed to
@@ -413,13 +370,7 @@ pub fn render_hits(
 ) -> Result<(), RepographError> {
     match mode {
         OutputMode::Json => {
-            let envelope = FindEnvelope {
-                schema_version: FIND_SCHEMA_VERSION,
-                query,
-                semantic_used,
-                degraded,
-                hits,
-            };
+            let envelope = FindEnvelope::new(query, hits, semantic_used, degraded);
             let mut stdout = io::stdout().lock();
             serde_json::to_writer(&mut stdout, &envelope).map_err(serde_json_to_repograph)?;
             stdout.write_all(b"\n")?;
@@ -735,6 +686,7 @@ const fn check_label(c: Check) -> &'static str {
         Check::AgentDocPresent => "AgentDocPresent",
         Check::SkillArtifactFresh => "SkillArtifactFresh",
         Check::SearchIndex => "SearchIndex",
+        Check::McpRegistered => "McpRegistered",
     }
 }
 

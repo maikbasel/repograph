@@ -160,7 +160,7 @@ pub const REASON_COPILOT_DEFERRED: &str = "no writer in v1";
 /// can be detected as stale (see [`installed_version`] and the `doctor`
 /// freshness check). Kept in sync with the literal in [`DELIMITER_BEGIN`] by a
 /// unit test.
-pub const ARTIFACT_BODY_VERSION: u32 = 1;
+pub const ARTIFACT_BODY_VERSION: u32 = 2;
 
 /// Version-agnostic prefix of the begin marker. Splice detection matches on
 /// this so an older-version block is recognized and rewritten in place rather
@@ -169,7 +169,7 @@ pub const DELIMITER_BEGIN_PREFIX: &str = "<!-- repograph:begin";
 
 /// HTML-comment marker opening the repograph-managed region of an artifact,
 /// carrying the current [`ARTIFACT_BODY_VERSION`] stamp.
-pub const DELIMITER_BEGIN: &str = "<!-- repograph:begin v1 -->";
+pub const DELIMITER_BEGIN: &str = "<!-- repograph:begin v2 -->";
 
 /// HTML-comment marker closing the repograph-managed region of an artifact.
 pub const DELIMITER_END: &str = "<!-- repograph:end -->";
@@ -228,6 +228,18 @@ pub const SETUP_SUMMARY: &str = "Use when the user wants to set up or change the
 /// install layer rewrites only the delimited region.
 pub const BODY: &str = include_str!("agent_artifact_body.md");
 
+/// The consumer body for agents that host the MCP server.
+///
+/// Once `repograph mcp serve` is registered, the agent sees typed tool schemas
+/// describing every command's inputs and outputs. Repeating that as a command
+/// table and a JSON-envelope reference — which is most of [`BODY`] — would be
+/// dead weight paid for on every load. What the schemas cannot express is
+/// *preference*: that a cross-repo question should reach for `repograph_find`
+/// rather than a generic file search. That judgement is all this variant
+/// carries, plus a single fallback sentence for an install whose tools are not
+/// registered yet.
+pub const POLICY_BODY: &str = include_str!("agent_artifact_policy_body.md");
+
 /// The canonical instructional body for the `repograph-setup` capability — the
 /// mutating surface.
 ///
@@ -247,12 +259,38 @@ pub const SETUP_BODY: &str = include_str!("agent_artifact_setup_body.md");
 /// on purpose: it is a signpost to the skills, not a second copy of the body.
 pub const POINTER: &str = "## repograph\n\nThis project is registered with **repograph** — a local registry of the user's own git repositories, exposed to agents as structured JSON.\n\nWhen the user refers to one of their registered projects by name, prefer resolving it through repograph over manual `find` / `git`:\n\n- Read-only questions — \"switch to <name>\", \"open the api repo\", \"cd into <name>\", \"what's dirty across my projects\", \"which repos have uncommitted changes\", \"pull in <repo>'s CLAUDE.md\", or searching code across repos — use the **repograph** skill (or run `repograph list` / `status` / `context` / `switch` / `find` directly).\n- Changing the registry — register, group into a workspace, rename, retag, or remove — use the **repograph-setup** skill.\n\nThis is for which-repo / across-repos questions. For the current directory's own state, use plain `git`.";
 
-/// The instructional body for `capability`.
+/// The instructional body for `capability`, for an agent with no MCP host.
+///
+/// Prefer [`body_for_agent`] — this remains for the setup capability and for
+/// callers that genuinely want the CLI-shaped consumer body.
 #[must_use]
 pub const fn body_for(capability: Capability) -> &'static str {
     match capability {
         Capability::Consumer => BODY,
         Capability::Setup => SETUP_BODY,
+    }
+}
+
+/// The instructional body for `agent` × `capability`.
+///
+/// The consumer body has two variants and the agent decides which: an agent
+/// that hosts MCP gets [`POLICY_BODY`], because its tool schemas already carry
+/// the mechanics; an agent with no MCP host gets [`BODY`], because for it the
+/// CLI is the only surface and the command table is the whole story.
+///
+/// The setup capability is unaffected — mutation stays a CLI-driven,
+/// confirm-before-write flow on every agent, with no MCP tools behind it.
+#[must_use]
+pub const fn body_for_agent(agent: AgentId, capability: Capability) -> &'static str {
+    match capability {
+        Capability::Setup => SETUP_BODY,
+        Capability::Consumer => {
+            if crate::mcp_registration::hosts_mcp(agent) {
+                POLICY_BODY
+            } else {
+                BODY
+            }
+        }
     }
 }
 
@@ -411,7 +449,7 @@ pub fn render_artifact(agent: AgentId, capability: Capability) -> String {
             name = capability.skill_name(),
             summary = summary_for(capability),
             begin = DELIMITER_BEGIN,
-            body = body_for(capability),
+            body = body_for_agent(agent, capability),
             end = DELIMITER_END,
         ),
         AgentId::Cursor => format!(
@@ -419,15 +457,19 @@ pub fn render_artifact(agent: AgentId, capability: Capability) -> String {
              {begin}\n{body}\n{end}\n",
             summary = summary_for(capability),
             begin = DELIMITER_BEGIN,
-            body = body_for(capability),
+            body = body_for_agent(agent, capability),
             end = DELIMITER_END,
         ),
         AgentId::AgentsMd | AgentId::Aider | AgentId::Windsurf => {
             // Flat-file agents inline BOTH capabilities into one managed block:
             // the consumer body followed by the setup body. `capability` is
             // ignored — these agents only ever request the single combined file.
+            // Windsurf hosts MCP and so takes the policy variant here, while
+            // AGENTS.md and Aider take the CLI variant; the split is by MCP
+            // host, not by file shape.
+            let consumer = body_for_agent(agent, Capability::Consumer);
             format!(
-                "{DELIMITER_BEGIN}\n# repograph\n\n{BODY}\n\n# repograph-setup\n\n{SETUP_BODY}\n{DELIMITER_END}\n"
+                "{DELIMITER_BEGIN}\n# repograph\n\n{consumer}\n\n# repograph-setup\n\n{SETUP_BODY}\n{DELIMITER_END}\n"
             )
         }
         AgentId::Copilot => {
@@ -596,14 +638,15 @@ pub fn install_one(
     //   already contain user-authored prose. Splice the canonical body into
     //   the delimited region and leave everything outside untouched.
     let to_write = if wholly_owned_file(agent) {
-        if let Some(ref existing_body) = existing {
-            if existing_body == &full_artifact && !force {
-                return ArtifactResult::Unchanged {
-                    agent,
-                    capability,
-                    path: path.to_path_buf(),
-                };
-            }
+        if let Some(ref existing_body) = existing
+            && existing_body == &full_artifact
+            && !force
+        {
+            return ArtifactResult::Unchanged {
+                agent,
+                capability,
+                path: path.to_path_buf(),
+            };
         }
         full_artifact
     } else {
@@ -628,16 +671,15 @@ pub fn install_one(
         }
     };
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = fs_err::create_dir_all(parent) {
-                return ArtifactResult::Failed {
-                    agent,
-                    capability,
-                    error: RepographError::Io(e),
-                };
-            }
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = fs_err::create_dir_all(parent)
+    {
+        return ArtifactResult::Failed {
+            agent,
+            capability,
+            error: RepographError::Io(e),
+        };
     }
 
     match fs_err::write(path, to_write) {
@@ -689,16 +731,15 @@ pub fn install_pointer(scope: Scope, home: &Path, cwd: &Path) -> ArtifactResult 
         SpliceOutcome::Replaced(s) | SpliceOutcome::Appended(s) | SpliceOutcome::FreshWrite(s) => s,
     };
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = fs_err::create_dir_all(parent) {
-                return ArtifactResult::Failed {
-                    agent: AgentId::ClaudeCode,
-                    capability: Capability::Consumer,
-                    error: RepographError::Io(e),
-                };
-            }
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = fs_err::create_dir_all(parent)
+    {
+        return ArtifactResult::Failed {
+            agent: AgentId::ClaudeCode,
+            capability: Capability::Consumer,
+            error: RepographError::Io(e),
+        };
     }
 
     match fs_err::write(&path, to_write) {
@@ -1649,5 +1690,148 @@ mod tests {
                 "already-current artifacts report Unchanged, not Written"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod body_variant_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    /// Pinned agent → consumer-variant mapping. A change here is a deliberate
+    /// decision about what an agent is told, not an incidental edit.
+    const EXPECTED_POLICY: [AgentId; 4] = [
+        AgentId::ClaudeCode,
+        AgentId::Cursor,
+        AgentId::Windsurf,
+        AgentId::Copilot,
+    ];
+
+    #[test]
+    fn variant_selection_is_pinned_per_agent() {
+        for agent in AgentId::all() {
+            let body = body_for_agent(*agent, Capability::Consumer);
+            // Compared by content, not pointer: `const` items are inlined at
+            // each use site, so two references to the same constant need not
+            // share an address.
+            if EXPECTED_POLICY.contains(agent) {
+                assert_eq!(
+                    body, POLICY_BODY,
+                    "{agent:?} should receive the policy variant"
+                );
+            } else {
+                assert_eq!(body, BODY, "{agent:?} should receive the CLI variant");
+            }
+        }
+    }
+
+    #[test]
+    fn policy_variant_drops_the_command_table_and_json_reference() {
+        assert!(
+            !POLICY_BODY.contains("| Intent"),
+            "the tool schemas carry the command surface; the table is dead weight"
+        );
+        assert!(
+            !POLICY_BODY.contains("## JSON envelope"),
+            "the tool schemas carry the payload shapes"
+        );
+        assert!(
+            !POLICY_BODY.contains("schema_version"),
+            "envelope mechanics belong to the schemas, not the skill body"
+        );
+    }
+
+    #[test]
+    fn policy_variant_names_the_cli_as_the_fallback() {
+        assert!(
+            POLICY_BODY.contains("repograph list --json"),
+            "an install without registered tools must be told what to run instead"
+        );
+        assert!(
+            POLICY_BODY.contains("repograph init"),
+            "the fallback names the command that fixes the situation"
+        );
+    }
+
+    #[test]
+    fn policy_variant_never_instructs_a_mutating_command() {
+        // The CLI variant legitimately mentions `repograph add` in prose when
+        // explaining how the registry came to exist; the existing
+        // Commands-section test is what guards that body. The policy variant
+        // has no Commands section at all, so any mutating invocation in it
+        // would be an instruction.
+        for mutating in [
+            "repograph add",
+            "repograph remove",
+            "repograph edit",
+            "repograph workspace",
+        ] {
+            assert!(
+                !POLICY_BODY.contains(mutating),
+                "policy body must not instruct `{mutating}`"
+            );
+        }
+    }
+
+    #[test]
+    fn both_consumer_variants_delegate_mutation_to_the_setup_skill() {
+        for body in [BODY, POLICY_BODY] {
+            assert!(
+                body.contains("repograph-setup"),
+                "consumer body names the skill that owns mutation"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_variant_states_the_prefer_over_generic_search_rule() {
+        assert!(
+            POLICY_BODY.contains("repograph_find"),
+            "the whole point is naming the tool to prefer"
+        );
+        assert!(
+            POLICY_BODY.contains("git"),
+            "and the case where plain git is correct instead"
+        );
+    }
+
+    #[test]
+    fn every_rendered_artifact_carries_the_current_delimiter_version() {
+        for agent in AgentId::all() {
+            if !has_artifact_writer(*agent) {
+                continue;
+            }
+            for capability in capabilities_for(*agent) {
+                let rendered = render_artifact(*agent, *capability);
+                assert!(
+                    rendered.contains(DELIMITER_BEGIN),
+                    "{agent:?}/{capability:?} missing the current version stamp"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mcp_hosting_agents_render_the_policy_variant() {
+        // Windsurf is the interesting case: a flat-file agent that hosts MCP,
+        // so the split is by MCP host rather than by file shape.
+        let rendered = render_artifact(AgentId::Windsurf, Capability::Consumer);
+        assert!(rendered.contains("repograph_find"));
+        // Flat-file agents inline the setup body too, and that one keeps its
+        // command table — so assert on a section unique to the CLI *consumer*
+        // variant rather than on table syntax generally.
+        assert!(
+            !rendered.contains("## JSON envelope"),
+            "the consumer half should be the policy variant"
+        );
+    }
+
+    #[test]
+    fn non_mcp_agents_render_the_cli_variant() {
+        let rendered = render_artifact(AgentId::Aider, Capability::Consumer);
+        assert!(
+            rendered.contains("repograph context --json"),
+            "Aider has no tools, so the CLI surface is the whole story"
+        );
     }
 }

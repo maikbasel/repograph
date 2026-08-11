@@ -216,7 +216,7 @@ fn doctor_fix_refreshes_a_stale_skill_and_reports_ok() {
     );
     let body = std::fs::read_to_string(&consumer).unwrap();
     assert!(
-        body.contains("<!-- repograph:begin v1 -->") && !body.contains("v0"),
+        body.contains(repograph_core::DELIMITER_BEGIN) && !body.contains("v0"),
         "skill file bumped to the current version, got:\n{body}"
     );
 }

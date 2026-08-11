@@ -94,6 +94,7 @@ pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
 
     if args.no_prompt {
         run_non_interactive(args, &mut config, config_dir)?;
+        stamp_setup_version(config_dir);
         tracing::info!("init: completed (non-interactive)");
         return Ok(());
     }
@@ -112,8 +113,31 @@ pub fn run(args: &Args, config_dir: &Path) -> Result<(), RepographError> {
     } else {
         run_first_run(args, &mut config, config_dir)?;
     }
+    stamp_setup_version(config_dir);
     tracing::info!("init: completed (interactive)");
     Ok(())
+}
+
+/// Record the running version as the completed setup version.
+///
+/// `init` has just done everything reconciliation would do, so stamping here is
+/// what stops the post-command reconcile hook from announcing an upgrade on the
+/// very next command. Re-read from disk rather than reusing the in-memory
+/// config, because the interactive flows save it several times along the way.
+///
+/// Failure to stamp is not worth failing a successful `init` over: the only
+/// consequence is one redundant reconciliation later, which is idempotent.
+fn stamp_setup_version(config_dir: &Path) {
+    let Ok(mut config) = Config::load(config_dir) else {
+        return;
+    };
+    if config.agents().is_none() {
+        return;
+    }
+    config.set_settings(Some(crate::reconcile::stamp_settings(config.settings())));
+    if let Err(e) = config.save(config_dir) {
+        tracing::warn!(err = %e, "init: could not persist setup_version stamp");
+    }
 }
 
 /// Does the selection contain at least one agent for which `Scope::User` and
@@ -186,6 +210,14 @@ fn run_install(
     };
     let results = install_artifacts(selected, scope, &home, &cwd, force);
     log_install_results(&results);
+
+    // Registering the MCP server is the other half of host setup: the artifact
+    // tells an agent how to prefer repograph, the registration is what puts
+    // repograph's tools in the agent's tool list at all. A registration failure
+    // is reported but does not abort — the artifacts are already installed and
+    // are independently useful.
+    let registrations = crate::reconcile::register_all_at(selected, scope, &home, &cwd);
+    crate::reconcile::log_registration_results(&registrations);
     Ok(())
 }
 

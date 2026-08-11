@@ -16,11 +16,10 @@ use repograph_core::{
     ArtifactResult, CONFIG_FILE_NAME, Config, DoctorReport, RepographError, index_health,
     refresh_installed_artifacts,
 };
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::output::{OutputMode, render_doctor};
 use crate::prompt::host_home;
+use crate::timestamp::now_rfc3339;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -57,12 +56,12 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
     let generated_at = now_rfc3339();
 
     let load = Config::load(config_dir);
-    if let Err(RepographError::Io(ref e)) = load {
-        if e.kind() == io::ErrorKind::PermissionDenied {
-            return Err(load
-                .err()
-                .unwrap_or_else(|| RepographError::Io(io::Error::other("permission denied"))));
-        }
+    if let Err(RepographError::Io(ref e)) = load
+        && e.kind() == io::ErrorKind::PermissionDenied
+    {
+        return Err(load
+            .err()
+            .unwrap_or_else(|| RepographError::Io(io::Error::other("permission denied"))));
     }
 
     let report = match &load {
@@ -97,8 +96,16 @@ pub fn run(args: &Args, config_dir: &Path, data_dir: &Path) -> Result<(), Repogr
             if args.fix {
                 let fixed = refresh_installed_artifacts(selected, &home, &cwd);
                 log_fix_results(&fixed);
+                // `--fix` repairs the MCP registration too: a stale command
+                // path is exactly the kind of drift the flag exists to clear,
+                // and leaving it would report an error the user was told the
+                // flag would fix.
+                let registered = crate::reconcile::register_all(selected, &home, &cwd);
+                crate::reconcile::log_registration_results(&registered);
             }
-            report.with_skill_artifact_check(selected, &home, &cwd)
+            report
+                .with_skill_artifact_check(selected, &home, &cwd)
+                .with_mcp_registration_check(selected, &home, &cwd)
         }
         _ => report,
     };
@@ -148,10 +155,4 @@ fn log_fix_results(results: &[ArtifactResult]) {
             ArtifactResult::Skipped { .. } => {}
         }
     }
-}
-
-fn now_rfc3339() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }

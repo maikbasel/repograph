@@ -92,6 +92,21 @@ pub struct Settings {
     /// "fall back to free-form input with autocomplete."
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projects_root: Option<PathBuf>,
+
+    /// The `repograph` version that last completed host setup — writing agent
+    /// artifacts and registering the MCP server.
+    ///
+    /// Upgrades arrive through four channels and three of them (Homebrew,
+    /// `cargo install`, the shell installer) replace the binary without running
+    /// any repograph code. This stamp is how a newly-installed binary notices
+    /// it is new and reconciles the host integration for the agents the user
+    /// already selected, instead of that work landing only for people who
+    /// happen to re-run `repograph init`.
+    ///
+    /// `None` means setup has never completed; a value older than the running
+    /// binary triggers exactly one reconciliation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_version: Option<String>,
 }
 
 /// Top-level config aggregating all registered repos, workspaces, and the
@@ -280,26 +295,25 @@ impl Config {
             .map(ToString::to_string);
 
         // Validate before mutating: target name must be free.
-        if let Some(new_name) = &rename_to {
-            if self.repos.contains_key(new_name) {
-                return Err(RepographError::Conflict {
-                    kind: "name",
-                    name: new_name.clone(),
-                });
-            }
+        if let Some(new_name) = &rename_to
+            && self.repos.contains_key(new_name)
+        {
+            return Err(RepographError::Conflict {
+                kind: "name",
+                name: new_name.clone(),
+            });
         }
         // Validate before mutating: a new path must not collide with another repo.
-        if let Some(new_path) = &edit.path {
-            if let Some((existing, _)) = self
+        if let Some(new_path) = &edit.path
+            && let Some((existing, _)) = self
                 .repos
                 .iter()
                 .find(|(k, r)| k.as_str() != name && &r.path == new_path)
-            {
-                return Err(RepographError::Conflict {
-                    kind: "path",
-                    name: existing.clone(),
-                });
-            }
+        {
+            return Err(RepographError::Conflict {
+                kind: "path",
+                name: existing.clone(),
+            });
         }
 
         // All checks passed — apply field updates to the (possibly soon-renamed) entry.
@@ -1059,6 +1073,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(Settings {
             projects_root: Some(PathBuf::from("/home/dev/IdeaProjects")),
+            ..Default::default()
         }));
         cfg.save(tmp.path()).unwrap();
         let reloaded = Config::load(tmp.path()).unwrap();
@@ -1095,6 +1110,7 @@ mod tests {
         }));
         cfg.set_settings(Some(Settings {
             projects_root: Some(PathBuf::from("/home/dev/IdeaProjects")),
+            ..Default::default()
         }));
         cfg.save(tmp.path()).unwrap();
         let body_first = fs_err::read_to_string(tmp.path().join(CONFIG_FILE_NAME)).unwrap();

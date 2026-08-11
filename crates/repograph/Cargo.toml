@@ -37,9 +37,24 @@ fs-err = { workspace = true }
 # feature (and tokio["full"]) out — we drive its async methods on a private
 # current-thread runtime instead (see commands/update.rs / update_notify.rs).
 axoupdater = { version = "0.10", default-features = false, features = ["github_releases"] }
-# Minimal tokio to host the current-thread runtime that blocks on axoupdater's
-# async calls; `net`+`time` enable the IO/time drivers reqwest needs.
-tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+# Minimal tokio to host the current-thread runtimes that block on async calls —
+# axoupdater's (commands/update.rs) and the MCP server's (commands/mcp.rs).
+# `net`+`time` enable the IO/time drivers reqwest needs; `io-std` gives the MCP
+# stdio transport async stdin/stdout. `io-std` is also unioned on by rmcp's
+# `transport-io`, but is declared here so the dependency is visible at this
+# call site rather than implied by a transitive feature.
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "io-std"] }
+# MCP server for `repograph mcp serve` — the stdio transport that puts
+# repograph's read surface in an agent's tool list. `default-features = false`
+# drops `base64` and keeps the client half, every HTTP/SSE transport, and the
+# auth stack out of the graph; `server` + `macros` + `transport-io` is the
+# minimal set for a stdio tool server. Raises the workspace MSRV to 1.88.
+rmcp = { version = "3", default-features = false, features = ["server", "macros", "transport-io"] }
+# Tool parameter schemas. rmcp re-exports schemars, but the `JsonSchema` derive
+# emits paths rooted at `schemars::`, so it is declared directly. Version "1"
+# unifies with rmcp's own schemars — a split would make the derived impls
+# invisible to rmcp's trait bounds.
+schemars = "1"
 # axoasset pulls reqwest with `default-features = false` and NO TLS feature, so
 # HTTPS to GitHub would fail. Declaring reqwest here with rustls-tls unions that
 # feature onto the shared reqwest in the graph — rustls (not system OpenSSL) so

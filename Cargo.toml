@@ -9,7 +9,9 @@ authors = ["Maik Basel <maik.basel@gmx.de>"]
 repository = "https://github.com/maikbasel/repograph"
 homepage = "https://github.com/maikbasel/repograph"
 readme = "README.md"
-rust-version = "1.85"
+# 1.88 is rmcp's floor (the MCP stdio server in the binary crate). The library
+# crate would still build on 1.85, but the workspace publishes one MSRV.
+rust-version = "1.88"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

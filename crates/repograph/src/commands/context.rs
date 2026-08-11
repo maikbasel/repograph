@@ -12,11 +12,10 @@ use std::path::Path;
 
 use clap::Parser;
 use repograph_core::{Config, Context, RepoContext, RepographError, SCHEMA_VERSION, Scope};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 use crate::output::{OutputMode, render_context, with_progress};
 use crate::prompt::ensure_agents_configured;
+use crate::timestamp::now_rfc3339;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -170,10 +169,4 @@ fn resolve_targets(config: &Config, scope: &Scope) -> Result<Vec<Target>, Repogr
             Ok(targets)
         }
     }
-}
-
-fn now_rfc3339() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }

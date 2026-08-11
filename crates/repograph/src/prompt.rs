@@ -666,6 +666,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(repograph_core::Settings {
             projects_root: Some(PathBuf::from("/from/config")),
+            ..Default::default()
         }));
         assert_eq!(
             resolve_projects_root(&cfg, None).as_deref(),
@@ -678,6 +679,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(repograph_core::Settings {
             projects_root: Some(PathBuf::from("/from/config")),
+            ..Default::default()
         }));
         assert_eq!(
             resolve_projects_root(&cfg, Some("/from/env".into())).as_deref(),
@@ -690,6 +692,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(repograph_core::Settings {
             projects_root: Some(PathBuf::from("/from/config")),
+            ..Default::default()
         }));
         assert_eq!(
             resolve_projects_root(&cfg, Some("".into())).as_deref(),

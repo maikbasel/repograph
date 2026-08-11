@@ -5,8 +5,8 @@
 //!
 //! Every check is read-only; no config writes, no network operations, no
 //! `git fetch`. The report is the contract: a stable, versioned envelope
-//! downstream consumers (CI health gates, the future MCP server) can parse
-//! without ambiguity.
+//! downstream consumers (CI health gates, the `repograph_doctor` MCP tool) can
+//! parse without ambiguity.
 
 use std::path::{Path, PathBuf};
 
@@ -89,6 +89,11 @@ pub enum Check {
     /// registered repo's HEAD. Appended by the binary via
     /// [`DoctorReport::with_index_check`].
     SearchIndex,
+    /// Per selected MCP-hosting agent: a `repograph` MCP server is registered
+    /// and the command it names resolves to an executable. Agents that host no
+    /// MCP server produce no finding. Appended by the binary via
+    /// [`DoctorReport::with_mcp_registration_check`].
+    McpRegistered,
 }
 
 /// One row in the report.
@@ -227,6 +232,27 @@ impl DoctorReport {
         self.summary = tally(&self.checks);
         self
     }
+
+    /// Append one MCP-registration finding per selected MCP-hosting agent, then
+    /// re-sort and re-tally.
+    ///
+    /// Read-only, like every other check: it inspects the client's config file
+    /// rather than invoking the client, because asking a vendor CLI a question
+    /// is both slow and a side-effect risk inside a command whose contract is
+    /// "changes nothing".
+    #[must_use]
+    pub fn with_mcp_registration_check(
+        mut self,
+        selected: &[crate::agents::AgentId],
+        home: &Path,
+        cwd: &Path,
+    ) -> Self {
+        self.checks
+            .extend(mcp_registration_findings(selected, home, cwd));
+        sort_findings(&mut self.checks);
+        self.summary = tally(&self.checks);
+        self
+    }
 }
 
 /// The on-disk state of one managed artifact, resolved across its candidate
@@ -319,6 +345,53 @@ fn freshness_finding(target: String, noun: &str, state: &ArtifactState) -> Findi
 }
 
 /// Build the per-(agent, capability) freshness findings. Pure and read-only.
+/// One finding per selected agent that hosts MCP. Agents without a host are
+/// skipped entirely rather than reported as `ok` — a finding for Aider saying
+/// "not applicable" is noise in a report meant to be scanned for problems.
+fn mcp_registration_findings(
+    selected: &[crate::agents::AgentId],
+    home: &Path,
+    cwd: &Path,
+) -> Vec<Finding> {
+    use crate::mcp_registration::{RegistrationStatus, status};
+
+    let mut findings = Vec::new();
+    for &agent in selected {
+        let target = agent.as_str().to_string();
+        let finding = match status(agent, home, cwd) {
+            RegistrationStatus::NotApplicable => continue,
+            RegistrationStatus::Ok { target: where_ } => Finding {
+                check: Check::McpRegistered,
+                severity: Severity::Ok,
+                target,
+                message: format!("MCP server registered ({where_})"),
+            },
+            RegistrationStatus::Missing { target: where_ } => Finding {
+                check: Check::McpRegistered,
+                severity: Severity::Warn,
+                target,
+                message: format!(
+                    "no MCP server registered ({where_}); run `repograph init` to register it"
+                ),
+            },
+            RegistrationStatus::Stale {
+                target: where_,
+                command,
+            } => Finding {
+                check: Check::McpRegistered,
+                severity: Severity::Error,
+                target,
+                message: format!(
+                    "registered MCP command does not resolve: {command} ({where_}); \
+                     run `repograph init` to repoint it"
+                ),
+            },
+        };
+        findings.push(finding);
+    }
+    findings
+}
+
 fn skill_artifact_findings(
     selected: &[crate::agents::AgentId],
     home: &Path,
@@ -695,6 +768,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(Settings {
             projects_root: Some(tmp.path().join("does-not-exist")),
+            ..Default::default()
         }));
         cfg.save(tmp.path()).unwrap();
         let path = tmp.path().join(CONFIG_FILE_NAME);
@@ -708,6 +782,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.set_settings(Some(Settings {
             projects_root: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         }));
         cfg.save(tmp.path()).unwrap();
         let path = tmp.path().join(CONFIG_FILE_NAME);

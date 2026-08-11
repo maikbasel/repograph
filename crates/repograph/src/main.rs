@@ -1,9 +1,12 @@
 //! repograph CLI entrypoint.
 
 mod commands;
+mod mcp;
 mod output;
 mod prompt;
+mod reconcile;
 mod selfupdate;
+mod timestamp;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -58,6 +61,11 @@ enum Command {
     Init(commands::init::Args),
     /// List the registered repositories.
     List(commands::list::Args),
+    /// Model Context Protocol integration. `mcp serve` runs the read-only MCP
+    /// server on stdio so agents see repograph's tools in their tool list;
+    /// clients spawn it, you rarely run it by hand.
+    #[command(subcommand_required = true, arg_required_else_help = true)]
+    Mcp(commands::mcp::Args),
     /// Remove a registered repository by name.
     Remove(commands::remove::Args),
     /// Report working-tree, branch, and upstream state across registered repos.
@@ -110,6 +118,7 @@ fn main() -> ExitCode {
         }
         Command::Init(args) => commands::init::run(&args, &config_dir),
         Command::List(args) => commands::list::run(&args, &config_dir),
+        Command::Mcp(args) => data_dir().and_then(|d| commands::mcp::run(&args, &config_dir, &d)),
         Command::Remove(args) => commands::remove::run(&args, &config_dir),
         Command::Status(args) => commands::status::run(&args, &config_dir),
         Command::Switch(args) => commands::switch::run(&args, &config_dir),
@@ -123,10 +132,16 @@ fn main() -> ExitCode {
         Err(e) => report(&e),
     };
 
-    // Passive update nudge — runs after the command's work, never alters the
-    // exit code, and is fully gated + fail-silent inside `notify`. Suppressed on
-    // a failed command so the nudge never stacks on top of an error message.
+    // Post-command housekeeping. Both are gated, fail-silent, and run after the
+    // command has already produced its output, so neither can alter what the
+    // user sees on stdout or the exit code returned below. Suppressed on a
+    // failed command so housekeeping never stacks on top of an error message.
     if succeeded {
+        // Bring an upgraded install's agent integration up to date. Most
+        // upgrade paths (brew, cargo install, the shell installer) replace the
+        // binary without running repograph code, so the new binary notices it
+        // is new here rather than during the upgrade itself.
+        reconcile::run_if_stale(&config_dir);
         selfupdate::notify(command_is_update);
     }
 

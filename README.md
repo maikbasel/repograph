@@ -512,7 +512,48 @@ crates/
 └── repograph/        # CLI binary, depends on repograph-core
 ```
 
-The library is published separately (`cargo add repograph-core`) so future tools (alternate front-ends, editor plugins, or batch utilities) can share the same domain logic without going through the CLI. Agent integration ships as native per-agent instruction files written by `repograph init` (see "Per-agent artifact installation" above), not as a separate MCP binary.
+The library is published separately (`cargo add repograph-core`) so future tools (alternate front-ends, editor plugins, or batch utilities) can share the same domain logic without going through the CLI. Agent integration has two halves, both driven by `repograph init` and both shipped in the one binary: native per-agent instruction files (see "Per-agent artifact installation" above), and an MCP server exposed as `repograph mcp serve` (see "MCP server" below).
+
+## MCP server
+
+Instruction files tell an agent how to use repograph. They do not make repograph *visible*: the agent still has to remember it exists and shell out. In practice agents reach for `grep` instead, because `grep` is already in their tool list and repograph is not.
+
+`repograph mcp serve` closes that gap. It speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdio — a local subprocess, no network, no port, no daemon — so repograph's read surface appears directly in the agent's tool list and competes with `grep` on equal footing.
+
+### Tools
+
+Six read-only tools, each annotated `readOnlyHint` so clients can auto-approve them without prompting on every call:
+
+| Tool | What it answers |
+|------|-----------------|
+| `repograph_list` | Which projects are registered, and where |
+| `repograph_status` | Branch, upstream, and dirty state across every repo |
+| `repograph_context` | Another project's CLAUDE.md / AGENTS.md, inlined |
+| `repograph_switch` | The absolute path for a repo the user named |
+| `repograph_find` | Where prior art lives, across every registered repo |
+| `repograph_doctor` | Registry health, when the setup misbehaves |
+
+Every result is byte-identical to the corresponding `--json` CLI output, so both surfaces share one documented contract. The mutating commands (`add`, `edit`, `remove`, `workspace …`) are deliberately **not** exposed — the registry stays yours to manage, behind the `repograph-setup` skill's confirm-before-write flow.
+
+### Registration
+
+`repograph init` registers the server for every selected agent that hosts one. There is nothing else to do:
+
+| Agent | Config written |
+|-------|----------------|
+| Claude Code | `~/.claude.json`, or `.mcp.json` at project scope |
+| Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| GitHub Copilot | `.vscode/mcp.json` |
+| Aider, AGENTS.md | no MCP host — instruction file only |
+
+Registration merges a single `repograph` key and preserves every other server already configured. `repograph doctor` reports whether it is registered and still resolves; `repograph doctor --fix` repairs it.
+
+### Upgrades
+
+An install set up by an older version is brought up to date automatically. Most upgrade paths — Homebrew, `cargo install`, the shell installer — replace the binary without running any repograph code, so instead the new binary notices it is new: the first command after an upgrade refreshes the instruction files and registers the MCP server for the agents you already selected, then records the version so it happens once.
+
+This only ever repairs setup you already have. If you have never run `repograph init`, nothing is written.
 
 ## Development
 
