@@ -51,7 +51,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # ONNX runtime (downloaded at build time) and a model (downloaded once at
 # runtime), so it is never compiled unless `--features semantic` is set. The
 # always-on lexical path needs none of this.
-fastembed = { version = "5", optional = true }
+fastembed = { version = "6", optional = true }
 
 [features]
 default = []
