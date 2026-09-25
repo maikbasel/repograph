@@ -25,7 +25,7 @@ ignored = ["reqwest"]
 repograph-core = { path = "../repograph-core", version = "0.6.0" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
-comfy-table = "7"
+comfy-table = "8"
 indicatif = "0.18"
 is-terminal = "0.4"
 rayon = "1"
