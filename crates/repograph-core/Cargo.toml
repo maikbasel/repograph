@@ -41,7 +41,7 @@ git2 = { version = "0.21", default-features = false, features = [
     "https",
     "ssh",
 ] }
-dirs = "6"
+dirs = "7"
 globset = "0.4"
 # Embedded index store. `bundled` compiles SQLite in (no system dep) with FTS5
 # enabled, giving BM25 lexical search; vectors are stored as Float32 BLOBs in a
